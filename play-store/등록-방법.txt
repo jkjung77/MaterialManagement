@@ -1,0 +1,72 @@
+기존 Play 개발자 계정으로 자재관리를 두 번째 앱으로 올리기
+====================================================
+
+이미 출시한 앱(예: Easy Edit, kr.jayoo.edit)은 그대로 둡니다.
+자재관리는 패키지가 다릅니다: kr.baraplt.material
+→ 콘솔에서 "앱 만들기"로 새 앱을 추가합니다. 기존 앱 업데이트로 올리면 안 됩니다.
+
+
+권장 전달 방식
+  지인만 설치: 내부 테스트 (스토어 검색에 안 나옴)
+  Play 링크로 누구나: 프로덕션 출시 (검색·링크 모두 공개)
+  공장 데이터가 들어 있으므로 기본은 내부 테스트.
+
+
+0) 올릴 파일
+  play-store/upload/app-release.aab
+  play-store/graphics/icon-512.png
+  play-store/graphics/feature-1024x500.png
+  play-store/screenshots/01~04
+  play-store/title-ko.txt / short-ko.txt / full-ko.txt
+  play-store/data-safety.txt
+  play-store/privacy-policy.html
+
+
+1) 새 앱 만들기 (기존 앱 옆)
+  https://play.google.com/console
+  모든 앱 → 앱 만들기
+  앱 이름: 자재관리
+  기본 언어: 한국어
+  앱 또는 게임: 앱
+  무료
+  정책·수출법 동의
+
+
+2) 대시보드 (Easy Edit 올릴 때와 동일)
+  카테고리: 비즈니스
+  광고 포함: 아니요
+  콘텐츠 등급: 설문 → 해당 없음 위주 → 전체 이용가
+  대상: 18세 이상, 어린이 대상 아님
+  데이터 보안: data-safety.txt (수집 없음, 공유 없음)
+  개인정보처리방침: privacy-policy.html 을 구글 사이트에 올린 URL
+
+
+3) 스토어 등록정보
+  앱 이름 / 짧은 설명 / 전체 설명 ← txt 파일
+  아이콘·추천 그래픽·스크린샷 4장
+
+
+4-A) 지인만 — 내부 테스트
+  테스트 → 내부 테스트 → 프로덕션으로 출시 아님
+  app-release.aab 업로드
+  테스터에 본인·지인 Gmail
+  선택 URL을 카톡으로 전달
+  지인이 링크에서 테스터 된 뒤 Play 스토어에서 설치
+
+
+4-B) 공개 링크 — 프로덕션
+  프로덕션 → 새 버전 만들기 → 같은 AAB
+  국가: 한국만 또는 전체
+  검토 후 출시 (보통 수 시간~며칠)
+  주소 예: https://play.google.com/store/apps/details?id=kr.baraplt.material
+
+
+5) 서명
+  첫 업로드 때 Play 앱 서명(Google 관리)을 켭니다.
+  keystore/material-upload.jks 와 keystore.properties 는
+  Easy Edit 키와 다릅니다. 절대 섞지 말고 둘 다 백업합니다.
+
+
+6) 이후 업데이트
+  versionCode 만 올리고 bundleRelease 한 뒤
+  같은 트랙에 새 AAB를 올리면 됩니다.

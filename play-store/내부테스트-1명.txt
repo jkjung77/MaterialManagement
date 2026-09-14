@@ -1,0 +1,49 @@
+자재관리 — 지인 1명 내부 테스트
+================================
+
+프로덕션 / 비공개 테스트(12명·14일) / Google Ads 는 하지 않습니다.
+앱 코드에도 광고 SDK가 없습니다. 콘솔에서도 광고 없음을 표시합니다.
+
+
+A. 광고 막기 (콘솔)
+  자재관리 앱 선택
+  Policy → App content (정책 → 앱 콘텐츠)
+  Ads / 광고 포함 여부
+  → No, my app does not contain ads
+  → 저장
+
+  Grow users 의 Google Ads / 광고 캠페인은 시작하지 않습니다.
+
+
+B. 내부 테스트에 AAB 올리기
+  Test and release → Testing → Internal testing
+  Create new release
+  파일: play-store/upload/app-release.aab
+  Release name: 1.0.0
+  저장 → Review release → Start rollout to Internal testing
+
+
+C. 테스터 2명 (본인 + 지인)
+  Internal testing → Testers
+  Create email list (이름 예: 자재관리-내부)
+  본인 Gmail
+  지인 Gmail
+  저장
+
+  Copy how testers join 링크 (opt-in URL)를 지인에게 보냄
+
+
+D. 지인이 할 일
+  1. 그 링크로 들어간다
+  2. 테스터가 됩니다 / Become a tester
+  3. 같은 Gmail로 폰 Play 스토어 로그인
+  4. 링크의 Play 스토어에서 자재관리 설치
+
+  검색창에 자재관리를 쳐도 안 나옵니다. 링크를 연 사람만 설치됩니다.
+
+
+하지 말 것
+  Production / Apply for production
+  Closed testing (12명·14일)
+  Google Ads 캠페인
+  광고 포함: 예

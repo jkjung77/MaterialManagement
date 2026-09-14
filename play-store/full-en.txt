@@ -1,0 +1,22 @@
+A factory material app for the shop floor. Record inbound stock, daily production, and inventory on the phone even when the network is weak.
+
+Materials
+• Item number, name, unit, unit price, safety stock, lead time
+• Inbound, outbound, scrap, and stocktake adjustments
+• Current stock = opening + inbound − production use − outbound − scrap + adjust
+
+Single-part production
+• Bill of materials with US per part
+• Daily production automatically consumes materials
+• Material cost, material ratio, plan versus actual
+
+Finished goods
+• Built from single parts
+• Monthly customer plan only (no daily sales entry)
+
+Close and backup
+• Month close locks results and carries stock to next month
+• Manager approval for stocktake differences
+• All data stays on the device. Export a JSON backup anytime
+
+No ads. No sign-in. No location or contacts permission.
