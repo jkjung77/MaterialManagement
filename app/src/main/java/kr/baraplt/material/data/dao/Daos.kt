@@ -47,6 +47,9 @@ interface MaterialDao {
 
     @Query("DELETE FROM materials")
     suspend fun clear()
+
+    @Query("DELETE FROM materials WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -65,6 +68,9 @@ interface OpeningStockDao {
 
     @Query("DELETE FROM opening_stocks")
     suspend fun clear()
+
+    @Query("DELETE FROM opening_stocks WHERE materialId = :materialId")
+    suspend fun deleteForMaterial(materialId: Long)
 }
 
 @Dao
@@ -92,6 +98,9 @@ interface MovementDao {
 
     @Query("DELETE FROM stock_movements")
     suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM stock_movements WHERE materialId = :materialId")
+    suspend fun countForMaterial(materialId: Long): Int
 }
 
 @Dao
@@ -119,6 +128,9 @@ interface ProductDao {
 
     @Query("DELETE FROM products")
     suspend fun clear()
+
+    @Query("DELETE FROM products WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -140,6 +152,9 @@ interface BomDao {
 
     @Query("DELETE FROM product_bom")
     suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM product_bom WHERE materialId = :materialId")
+    suspend fun countForMaterial(materialId: Long): Int
 }
 
 @Dao
@@ -164,6 +179,9 @@ interface ProductionDao {
 
     @Query("DELETE FROM daily_production")
     suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM daily_production WHERE productId = :productId")
+    suspend fun countForProduct(productId: Long): Int
 }
 
 @Dao
@@ -179,6 +197,9 @@ interface ProductPlanDao {
 
     @Query("DELETE FROM product_plans")
     suspend fun clear()
+
+    @Query("DELETE FROM product_plans WHERE productId = :productId")
+    suspend fun deleteForProduct(productId: Long)
 }
 
 @Dao
@@ -203,6 +224,9 @@ interface FinishedDao {
 
     @Query("DELETE FROM finished_goods")
     suspend fun clear()
+
+    @Query("DELETE FROM finished_goods WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -221,6 +245,9 @@ interface CompositionDao {
 
     @Query("DELETE FROM finished_composition")
     suspend fun clear()
+
+    @Query("SELECT COUNT(*) FROM finished_composition WHERE productId = :productId")
+    suspend fun countForProduct(productId: Long): Int
 }
 
 @Dao
@@ -239,6 +266,9 @@ interface MonthlyPlanDao {
 
     @Query("DELETE FROM monthly_plans")
     suspend fun clear()
+
+    @Query("DELETE FROM monthly_plans WHERE finishedGoodId = :finishedId")
+    suspend fun deleteForFinished(finishedId: Long)
 }
 
 @Dao

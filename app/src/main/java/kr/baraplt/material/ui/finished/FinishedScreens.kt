@@ -11,18 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,14 +38,13 @@ import kr.baraplt.material.domain.parseNumber
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.AppCard
+import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.GhostButton
 import kr.baraplt.material.ui.components.KeyValue
 import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.TextFieldPlain
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.Ink
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,18 +55,13 @@ fun FinishedListScreen(
     onAdd: () -> Unit,
     onEdit: (Long) -> Unit
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("완제품 · 월계획") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card),
-                actions = {
-                    if (state.role.name == "MANAGER") {
-                        IconButton(onAdd) { Icon(Icons.Default.Add, null) }
-                    }
-                }
-            )
+    AppScreenScaffold(
+        title = "완제품 · 월계획",
+        onBack = onBack,
+        actions = {
+            if (state.role.name == "MANAGER") {
+                IconButton(onAdd) { Icon(Icons.Default.Add, contentDescription = "추가") }
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -118,6 +109,7 @@ fun FinishedEditScreen(
     existingId: Long?,
     onBack: () -> Unit
 ) {
+    var confirmDelete by remember { mutableStateOf(false) }
     val existing = state.workspace?.finished?.firstOrNull { it.id == existingId }
     val products = state.workspace?.products.orEmpty()
     var code by remember { mutableStateOf(existing?.codeNo?.toString().orEmpty()) }
@@ -131,15 +123,7 @@ fun FinishedEditScreen(
     LaunchedEffect(existingId) {
         if (existing == null && code.isEmpty()) code = vm.nextFinishedNo().toString()
     }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(if (existing == null) "완제품 등록" else "완제품 수정") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card)
-            )
-        }
-    ) { padding ->
+    AppScreenScaffold(title = if (existing == null) "완제품 등록" else "완제품 수정", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             contentPadding = PaddingValues(bottom = 24.dp),
@@ -184,6 +168,27 @@ fun FinishedEditScreen(
                     }
                 }, enabled = state.role.name == "MANAGER")
             }
+            if (existing != null && state.role.name == "MANAGER") {
+                item {
+                    GhostButton("완제품 삭제") { confirmDelete = true }
+                }
+            }
         }
+    }
+    if (confirmDelete && existing != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("이 완제품을 삭제할까요?") },
+            text = { Text("구성과 월계획도 함께 지워집니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteFinished(existing.id) { ok -> if (ok) onBack() }
+                }) { Text("삭제") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("취소") }
+            }
+        )
     }
 }

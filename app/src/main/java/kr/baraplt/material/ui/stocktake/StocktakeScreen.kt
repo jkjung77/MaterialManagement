@@ -6,16 +6,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -26,12 +19,11 @@ import kr.baraplt.material.domain.parseNumber
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.AppCard
+import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.KeyValue
 import kr.baraplt.material.ui.components.LockedBanner
 import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.PrimaryButton
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.InkMute
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,15 +37,7 @@ fun StocktakeScreen(
             state.workspace?.materials?.forEach { map[it.id] = formatQty(it.current) }
         }
     }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("재고조사") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card)
-            )
-        }
-    ) { padding ->
+    AppScreenScaffold(title = "재고조사", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             contentPadding = PaddingValues(bottom = 32.dp),
@@ -64,7 +48,7 @@ fun StocktakeScreen(
                 Text(
                     "실사 수량을 넣고 관리책임자가 승인하면 차이만큼 재고조정이 됩니다. 시작재고는 월말 재고조사에서 다음 달로 넘어갑니다.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = InkMute
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             items(state.workspace?.materials.orEmpty(), key = { it.id }) { m ->

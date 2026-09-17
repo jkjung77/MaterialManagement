@@ -21,6 +21,7 @@ object Routes {
     const val HISTORY = "history"
     const val STOCKTAKE = "stocktake"
     const val SETTINGS = "settings"
+    const val USER_GUIDE = "user_guide"
     const val MOVEMENT = "movement/{type}"
 
     fun materialDetail(id: Long) = "material_detail/$id"

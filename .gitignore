@@ -22,5 +22,11 @@ out/
 .kotlin/
 /.superpowers/
 /doc/_extract/
+/doc/_extract_app2/
 /doc/_unzip/
 /doc/*.xlsx
+/docs/_xlsx_app2/
+/docs/*.xlsx
+/server/.env
+.vscode/
+/gradle/gradle-daemon-jvm.properties

@@ -29,22 +29,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.AppCard
+import kr.baraplt.material.ui.components.AppListCard
+import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.LockedBanner
 import kr.baraplt.material.ui.components.MonthSwitcher
 import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.SectionTitle
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.CardAlt
-import kr.baraplt.material.ui.theme.Ink
-import kr.baraplt.material.ui.theme.InkMute
-import kr.baraplt.material.ui.theme.Line
+import androidx.compose.material3.ExperimentalMaterial3Api
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProductionScreen(
     state: AppUiState,
@@ -64,14 +63,18 @@ fun ProductionScreen(
         ?.associate { it.workDate.takeLast(2).toInt() to it.qty }
         .orEmpty()
 
+    AppScreenScaffold(title = "단품 생산실적") { padding ->
     LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("단품 생산실적", style = MaterialTheme.typography.headlineMedium)
-            Text("오전에 전일·당일 실적을 넣으면 자재 투입이 자동 계산됩니다.", style = MaterialTheme.typography.bodyMedium, color = InkMute)
+            Text(
+                "오전에 전일·당일 실적을 넣으면 자재 투입이 자동 계산됩니다.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         item {
             MonthSwitcher(state.month.display(), state.closed, onPrevMonth, onNextMonth)
@@ -79,15 +82,14 @@ fun ProductionScreen(
         item { LockedBanner(state.closed) }
         item { SectionTitle("단품 선택") }
         items(products, key = { it.id }) { p ->
-            AppCard(onClick = { productId = p.id }) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("NO.${p.codeNo}  ${p.name}", style = MaterialTheme.typography.titleMedium)
-                        Text("실적 ${p.produced} / 계획 ${p.monthPlan}", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    if (p.id == productId) Text("선택", color = Ink)
+            AppListCard(
+                title = "NO.${p.codeNo}  ${p.name}",
+                subtitle = "실적 ${p.produced} / 계획 ${p.monthPlan}",
+                onClick = { productId = p.id },
+                trailing = {
+                    if (p.id == productId) Text("선택", color = MaterialTheme.colorScheme.primary)
                 }
-            }
+            )
         }
         if (product != null) {
             item {
@@ -102,6 +104,7 @@ fun ProductionScreen(
                 }
             }
         }
+    }
     }
 
     val day = selectedDay
@@ -126,8 +129,7 @@ fun ProductionScreen(
                     }
                 ) { Text(if (state.canEditOps) "저장" else "닫기") }
             },
-            dismissButton = { TextButton({ selectedDay = null }) { Text("취소") } },
-            containerColor = Card
+            dismissButton = { TextButton({ selectedDay = null }) { Text("취소") } }
         )
     }
 }
@@ -144,7 +146,7 @@ private fun DayGrid(
     val weekLabels = listOf("일", "월", "화", "수", "목", "금", "토")
     Row(Modifier.fillMaxWidth()) {
         weekLabels.forEach {
-            Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium, color = InkMute)
+            Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     Spacer(Modifier.height(6.dp))
@@ -157,19 +159,24 @@ private fun DayGrid(
                     Spacer(Modifier.weight(1f).aspectRatio(1f))
                 } else {
                     val qty = qtyByDay[day] ?: 0
+                    val scheme = MaterialTheme.colorScheme
                     val bg = when {
-                        selected == day -> Ink
-                        qty > 0 -> CardAlt
-                        else -> Card
+                        selected == day -> scheme.primary
+                        qty > 0 -> scheme.primaryContainer
+                        else -> scheme.surface
                     }
-                    val fg = if (selected == day) Color.White else Ink
+                    val fg = when {
+                        selected == day -> scheme.onPrimary
+                        qty > 0 -> scheme.onPrimaryContainer
+                        else -> scheme.onSurface
+                    }
                     Box(
                         Modifier
                             .weight(1f)
                             .aspectRatio(1f)
                             .clip(RoundedCornerShape(10.dp))
                             .background(bg)
-                            .border(1.dp, Line, RoundedCornerShape(10.dp))
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(10.dp))
                             .clickable { onSelect(day) },
                         contentAlignment = Alignment.Center
                     ) {

@@ -12,18 +12,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,6 +42,9 @@ import kr.baraplt.material.domain.parseNumber
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.AppCard
+import kr.baraplt.material.ui.components.AppListCard
+import kr.baraplt.material.ui.components.AppScreenScaffold
+import kr.baraplt.material.ui.components.AppSearchField
 import kr.baraplt.material.ui.components.GhostButton
 import kr.baraplt.material.ui.components.KeyValue
 import kr.baraplt.material.ui.components.LockedBanner
@@ -53,9 +53,6 @@ import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.StatusChip
 import kr.baraplt.material.ui.components.TextFieldPlain
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.Ink
-import kr.baraplt.material.ui.theme.InkMute
 
 @Composable
 fun MaterialListScreen(
@@ -73,24 +70,28 @@ fun MaterialListScreen(
                 it.name.contains(query, true) ||
                 it.codeNo.toString().contains(query)
         }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Spacer(Modifier.height(12.dp))
-        Text("자재", style = MaterialTheme.typography.headlineMedium)
-        TextFieldPlain(query, { query = it }, "자재명 / 번호 검색")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(selected = !onlyAlert, onClick = { onlyAlert = false }, label = { Text("전체 ${state.workspace?.materials?.size ?: 0}") })
-            FilterChip(selected = onlyAlert, onClick = { onlyAlert = true }, label = { Text("경보") })
-            Spacer(Modifier.weight(1f))
+    AppScreenScaffold(
+        title = "자재",
+        floatingActionButton = {
             if (canAdd) {
-                FloatingActionButton(onClick = onAdd, containerColor = Ink, contentColor = Card) {
+                FloatingActionButton(onClick = onAdd) {
                     Icon(Icons.Default.Add, contentDescription = "추가")
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(items, key = { it.id }) { m ->
-                MaterialRow(m) { onOpen(m.id) }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+            AppSearchField(query, { query = it }, "자재명 / 번호 검색")
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(selected = !onlyAlert, onClick = { onlyAlert = false }, label = { Text("전체 ${state.workspace?.materials?.size ?: 0}") })
+                FilterChip(selected = onlyAlert, onClick = { onlyAlert = true }, label = { Text("경보") })
+            }
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                items(items, key = { it.id }) { m ->
+                    MaterialRow(m) { onOpen(m.id) }
+                }
             }
         }
     }
@@ -98,40 +99,31 @@ fun MaterialListScreen(
 
 @Composable
 private fun MaterialRow(m: MaterialSnapshot, onClick: () -> Unit) {
-    AppCard(onClick = onClick) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text("NO.${m.codeNo}  ${m.name}", style = MaterialTheme.typography.titleMedium)
-                Text("현재고 ${formatQty(m.current)} ${m.unit} · 단가 ${formatMoney(m.unitPrice)}원", style = MaterialTheme.typography.bodyMedium)
-            }
-            StatusChip(m.status)
-        }
-    }
+    AppListCard(
+        title = "NO.${m.codeNo}  ${m.name}",
+        subtitle = "현재고 ${formatQty(m.current)} ${m.unit} · 단가 ${formatMoney(m.unitPrice)}원",
+        onClick = onClick,
+        trailing = { StatusChip(m.status) }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MaterialDetailScreen(
     state: AppUiState,
+    vm: AppViewModel,
     materialId: Long,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onInbound: () -> Unit,
     onScrap: () -> Unit
 ) {
+    var confirmDelete by remember { mutableStateOf(false) }
     val m = state.workspace?.materials?.firstOrNull { it.id == materialId }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(m?.name ?: "자재") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card, titleContentColor = Ink)
-            )
-        }
-    ) { padding ->
+    AppScreenScaffold(title = m?.name ?: "자재", onBack = onBack) { padding ->
         if (m == null) {
             Text("자재를 찾을 수 없습니다", Modifier.padding(padding).padding(16.dp))
-            return@Scaffold
+            return@AppScreenScaffold
         }
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -142,7 +134,7 @@ fun MaterialDetailScreen(
                 AppCard {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column {
-                            Text("NO.${m.codeNo}", color = InkMute, style = MaterialTheme.typography.labelMedium)
+                            Text("NO.${m.codeNo}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                             Text(m.name, style = MaterialTheme.typography.headlineMedium)
                         }
                         StatusChip(m.status)
@@ -168,9 +160,29 @@ fun MaterialDetailScreen(
                 Spacer(Modifier.height(8.dp))
                 GhostButton("폐기 / 반출", enabled = state.canEditOps, onClick = onScrap)
                 Spacer(Modifier.height(8.dp))
-                if (state.role.name == "MANAGER") GhostButton("기초정보 수정", onClick = onEdit)
+                if (state.role.name == "MANAGER") {
+                    GhostButton("기초정보 수정", onClick = onEdit)
+                    Spacer(Modifier.height(8.dp))
+                    GhostButton("자재 삭제") { confirmDelete = true }
+                }
             }
         }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("이 자재를 삭제할까요?") },
+            text = { Text("이름이나 단가만 바꾸면 「기초정보 수정」을 쓰면 됩니다. 입고나 단품에 쓰인 자재는 지울 수 없습니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteMaterial(materialId) { ok -> if (ok) onBack() }
+                }) { Text("삭제") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("취소") }
+            }
+        )
     }
 }
 
@@ -197,15 +209,7 @@ fun MaterialEditScreen(
             code = vm.nextMaterialNo().toString()
         }
     }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(if (existing == null) "자재 등록" else "자재 수정") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card)
-            )
-        }
-    ) { padding ->
+    AppScreenScaffold(title = if (existing == null) "자재 등록" else "자재 수정", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -236,7 +240,7 @@ fun MaterialEditScreen(
                         return@PrimaryButton
                     }
                     scope.launch {
-                        vm.saveMaterial(
+                        val ok = vm.saveMaterial(
                             MaterialEntity(
                                 id = existing?.id ?: 0,
                                 codeNo = no,
@@ -249,7 +253,7 @@ fun MaterialEditScreen(
                             ),
                             opening = parseNumber(opening)
                         )
-                        onBack()
+                        if (ok) onBack()
                     }
                 }, enabled = state.role.name == "MANAGER")
             }
@@ -267,21 +271,20 @@ fun MovementScreen(
     onBack: () -> Unit
 ) {
     val types = if (typeName == "SCRAP") listOf(MovementType.SCRAP, MovementType.OUTBOUND) else listOf(MovementType.INBOUND)
+    val materials = state.workspace?.materials.orEmpty()
     var type by remember { mutableStateOf(types.first()) }
-    var materialId by remember { mutableStateOf(presetMaterialId ?: state.workspace?.materials?.firstOrNull()?.id) }
+    var materialId by remember { mutableStateOf(presetMaterialId) }
     var qty by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(vm.todayInMonth()) }
-    val selected = state.workspace?.materials?.firstOrNull { it.id == materialId }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(if (typeName == "INBOUND") "자재 입고" else "폐기 / 반출") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card)
-            )
+    LaunchedEffect(presetMaterialId, materials.map { it.id }) {
+        if (materialId == null || materials.none { it.id == materialId }) {
+            materialId = presetMaterialId?.takeIf { id -> materials.any { it.id == id } }
+                ?: materials.firstOrNull()?.id
         }
-    ) { padding ->
+    }
+    val selected = materials.firstOrNull { it.id == materialId }
+    AppScreenScaffold(title = if (typeName == "INBOUND") "자재 입고" else "폐기 / 반출", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -297,12 +300,30 @@ fun MovementScreen(
                 }
             }
             item { SectionTitle("자재 선택") }
-            items(state.workspace?.materials.orEmpty(), key = { it.id }) { m ->
+            if (materials.isEmpty()) {
+                item {
+                    Text(
+                        "등록된 자재가 없습니다. 자재 탭에서 품목을 먼저 등록하세요.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            items(materials, key = { it.id }) { m ->
                 AppCard(onClick = { materialId = m.id }) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("NO.${m.codeNo}  ${m.name}", style = MaterialTheme.typography.titleSmall)
-                        if (m.id == materialId) Text("선택됨", color = Ink)
+                        if (m.id == materialId) Text("선택됨", color = MaterialTheme.colorScheme.primary)
                     }
+                }
+            }
+            if (selected != null) {
+                item {
+                    Text(
+                        "선택: NO.${selected.codeNo}  ${selected.name}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
             item { NumberField(qty, { qty = it }, "수량", suffix = selected?.unit) }
@@ -312,12 +333,15 @@ fun MovementScreen(
                 PrimaryButton("반영", onClick = {
                     val q = parseNumber(qty)
                     val id = materialId
-                    if (id == null || q == null) {
-                        vm.show("자재와 수량을 입력하세요")
-                        return@PrimaryButton
+                    when {
+                        materials.isEmpty() -> vm.show("먼저 자재를 등록하세요")
+                        id == null -> vm.show("자재를 선택하세요")
+                        q == null || q == 0.0 -> vm.show("수량을 입력하세요")
+                        else -> {
+                            vm.addMovement(id, type, q, date, note)
+                            onBack()
+                        }
                     }
-                    vm.addMovement(id, type, q, date, note)
-                    onBack()
                 }, enabled = state.canEditOps)
             }
         }

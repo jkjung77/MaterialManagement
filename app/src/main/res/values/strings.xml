@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">자재관리</string>
+    <string name="update_title">업데이트 안내</string>
+    <string name="update_message">새로운 버전이 있습니다.\n지금 업데이트하시겠습니까?</string>
+    <string name="update_now">업데이트</string>
+    <string name="update_later">나중에</string>
+    <string name="update_downloaded">새 버전 다운로드가 완료되었습니다.</string>
+    <string name="update_restart">다시 시작</string>
 </resources>

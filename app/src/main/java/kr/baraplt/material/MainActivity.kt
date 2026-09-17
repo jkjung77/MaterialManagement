@@ -14,9 +14,9 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -27,7 +27,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -56,22 +55,41 @@ import kr.baraplt.material.ui.report.ReportScreen
 import kr.baraplt.material.ui.settings.MonthCloseScreen
 import kr.baraplt.material.ui.settings.MoreScreen
 import kr.baraplt.material.ui.settings.SettingsScreen
+import kr.baraplt.material.ui.settings.UserGuideScreen
+import kr.baraplt.material.ui.settings.WorkspaceSetupScreen
 import kr.baraplt.material.ui.stocktake.StocktakeScreen
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.Ink
-import kr.baraplt.material.ui.theme.InkMute
 import kr.baraplt.material.ui.theme.MaterialMgmtTheme
-import kr.baraplt.material.ui.theme.Paper
+import kr.baraplt.material.update.InAppUpdateCoordinator
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var inAppUpdate: InAppUpdateCoordinator
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        inAppUpdate = InAppUpdateCoordinator(this)
+        inAppUpdate.register()
         setContent {
             MaterialMgmtTheme {
                 MaterialAppRoot()
             }
         }
+        inAppUpdate.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::inAppUpdate.isInitialized) {
+            inAppUpdate.onResume()
+        }
+    }
+
+    override fun onDestroy() {
+        if (::inAppUpdate.isInitialized) {
+            inAppUpdate.onDestroy()
+        }
+        super.onDestroy()
     }
 }
 
@@ -90,12 +108,17 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
         vm.consumeMessage()
     }
 
+    if (state.ready && (state.needsWorkspace || state.needsWorkspacePassword)) {
+        WorkspaceSetupScreen(vm, presetId = if (state.needsWorkspacePassword) state.workspaceId else "")
+        return
+    }
+
     Scaffold(
-        containerColor = Paper,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (showBottom) {
-                NavigationBar(containerColor = Card, contentColor = Ink) {
+                NavigationBar {
                     bottomDestinations.forEach { dest ->
                         NavigationBarItem(
                             selected = route == dest.route,
@@ -118,14 +141,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                                     contentDescription = dest.label
                                 )
                             },
-                            label = { Text(dest.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Ink,
-                                selectedTextColor = Ink,
-                                unselectedIconColor = InkMute,
-                                unselectedTextColor = InkMute,
-                                indicatorColor = Color(0xFFE0E0E0)
-                            )
+                            label = { Text(dest.label) }
                         )
                     }
                 }
@@ -134,7 +150,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
     ) { padding ->
         if (!state.ready) {
             Box(Modifier.padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Ink)
+                CircularProgressIndicator()
             }
             return@Scaffold
         }
@@ -152,7 +168,8 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     onProduction = { nav.navigate(Dest.Production.route) },
                     onScrap = { nav.navigate(Routes.movement("SCRAP")) },
                     onStocktake = { nav.navigate(Routes.STOCKTAKE) },
-                    onMaterial = { nav.navigate(Routes.materialDetail(it)) }
+                    onMaterial = { nav.navigate(Routes.materialDetail(it)) },
+                    onSync = { vm.syncNow() }
                 )
             }
             composable(Dest.Materials.route) {
@@ -183,6 +200,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     onHistory = { nav.navigate(Routes.HISTORY) },
                     onStocktake = { nav.navigate(Routes.STOCKTAKE) },
                     onSettings = { nav.navigate(Routes.SETTINGS) },
+                    onGuide = { nav.navigate(Routes.USER_GUIDE) },
                     onClose = { nav.navigate("month_close") }
                 )
             }
@@ -193,6 +211,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 val id = entry.arguments?.getLong("id") ?: return@composable
                 MaterialDetailScreen(
                     state = state,
+                    vm = vm,
                     materialId = id,
                     onBack = { nav.popBackStack() },
                     onEdit = { nav.navigate("${Routes.MATERIAL_EDIT}?id=$id") },
@@ -233,6 +252,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 val id = entry.arguments?.getLong("id") ?: return@composable
                 ProductDetailScreen(
                     state = state,
+                    vm = vm,
                     productId = id,
                     onBack = { nav.popBackStack() },
                     onEdit = { nav.navigate("${Routes.PRODUCT_EDIT}?id=$id") },
@@ -263,6 +283,7 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
             composable(Routes.HISTORY) { HistoryScreen(state, vm) { nav.popBackStack() } }
             composable(Routes.STOCKTAKE) { StocktakeScreen(state, vm) { nav.popBackStack() } }
             composable(Routes.SETTINGS) { SettingsScreen(state, vm) { nav.popBackStack() } }
+            composable(Routes.USER_GUIDE) { UserGuideScreen { nav.popBackStack() } }
             composable("month_close") { MonthCloseScreen(state, vm) { nav.popBackStack() } }
         }
     }

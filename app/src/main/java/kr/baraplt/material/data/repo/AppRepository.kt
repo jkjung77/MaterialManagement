@@ -1,6 +1,8 @@
 package kr.baraplt.material.data.repo
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kr.baraplt.material.data.AppDatabase
 import kr.baraplt.material.data.SeedData
 import kr.baraplt.material.data.entity.DailyProductionEntity
@@ -16,6 +18,8 @@ import kr.baraplt.material.data.entity.ProductPlanEntity
 import kr.baraplt.material.data.entity.StockMovementEntity
 import kr.baraplt.material.domain.BomLine
 import kr.baraplt.material.domain.FinishedSnapshot
+import kr.baraplt.material.domain.MaterialDeletePolicy
+import kr.baraplt.material.domain.ProductDeletePolicy
 import kr.baraplt.material.domain.MaterialSnapshot
 import kr.baraplt.material.domain.MonthReport
 import kr.baraplt.material.domain.MovementType
@@ -185,11 +189,41 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun nextProductNo(): Int = (db.products().maxCode() + 1).coerceAtMost(500)
     suspend fun nextFinishedNo(): Int = (db.finished().maxCode() + 1).coerceAtMost(26)
 
+    suspend fun deleteMaterial(id: Long): String? {
+        val reason = MaterialDeletePolicy.blockReason(
+            db.movements().countForMaterial(id),
+            db.bom().countForMaterial(id)
+        )
+        if (reason != null) return reason
+        db.openings().deleteForMaterial(id)
+        db.materials().deleteById(id)
+        return null
+    }
+
     suspend fun saveMaterial(item: MaterialEntity): Long {
         return if (item.id == 0L) db.materials().insert(item) else {
             db.materials().update(item.copy(updatedAt = System.currentTimeMillis()))
             item.id
         }
+    }
+
+    suspend fun deleteProduct(id: Long): String? {
+        val reason = ProductDeletePolicy.blockReason(
+            db.production().countForProduct(id),
+            db.composition().countForProduct(id)
+        )
+        if (reason != null) return reason
+        db.bom().deleteForProduct(id)
+        db.productPlans().deleteForProduct(id)
+        db.products().deleteById(id)
+        return null
+    }
+
+    suspend fun deleteFinished(id: Long): String? {
+        db.composition().deleteForFinished(id)
+        db.monthlyPlans().deleteForFinished(id)
+        db.finished().deleteById(id)
+        return null
     }
 
     suspend fun saveProduct(item: ProductEntity, bom: List<ProductBomEntity>): Long {
@@ -287,15 +321,16 @@ class AppRepository(private val db: AppDatabase) {
         db.closes().delete(month.value)
     }
 
-    suspend fun seedSample() {
+    suspend fun seedSample() = withContext(Dispatchers.IO) {
         SeedData.populate(db)
     }
 
-    suspend fun clearAll() {
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
         db.clearAllTables()
     }
 
-    suspend fun exportBundle(): BackupBundle = BackupBundle(
+    suspend fun exportBundle(): BackupBundle = withContext(Dispatchers.IO) {
+        BackupBundle(
         materials = db.materials().getAll(),
         openings = db.openings().getAll(),
         movements = db.movements().getAll(),
@@ -307,21 +342,16 @@ class AppRepository(private val db: AppDatabase) {
         composition = db.composition().getAll(),
         monthlyPlans = db.monthlyPlans().getAll(),
         closes = db.closes().getAll()
-    )
-
-    suspend fun importBundle(bundle: BackupBundle) {
-        db.clearAllTables()
-        if (bundle.materials.isNotEmpty()) db.materials().insertAll(bundle.materials.map { it.copy(id = 0) })
-        // After clearing, auto IDs change. Import keeps original IDs via raw insert with ids.
-        // Room insert with id=0 regenerates. For restore we need to keep IDs.
-        // Re-import using REPLACE after mapping is complex; use a dedicated restore path.
+        )
     }
 
-    suspend fun restoreBundle(bundle: BackupBundle) {
+    suspend fun importBundle(bundle: BackupBundle) = withContext(Dispatchers.IO) {
         db.clearAllTables()
-        db.runInTransaction {
-            // IDs preserved via upsert-like inserts. Room @Insert with explicit IDs works if not 0.
-        }
+        if (bundle.materials.isNotEmpty()) db.materials().insertAll(bundle.materials.map { it.copy(id = 0) })
+    }
+
+    suspend fun restoreBundle(bundle: BackupBundle) = withContext(Dispatchers.IO) {
+        db.clearAllTables()
         restoreWithIds(bundle)
     }
 

@@ -1,44 +1,85 @@
 package kr.baraplt.material.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
+import androidx.compose.material3.SearchBar
+import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kr.baraplt.material.domain.StockStatus
-import kr.baraplt.material.ui.theme.Card
-import kr.baraplt.material.ui.theme.CardAlt
-import kr.baraplt.material.ui.theme.Ink
-import kr.baraplt.material.ui.theme.InkMute
-import kr.baraplt.material.ui.theme.Line
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppScreenScaffold(
+    title: String,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    floatingActionButton: @Composable () -> Unit = {},
+    content: @Composable (PaddingValues) -> Unit
+) {
+    Scaffold(
+        modifier = modifier,
+        contentWindowInsets = WindowInsets(0),
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                        }
+                    }
+                },
+                actions = actions,
+                windowInsets = WindowInsets(0)
+            )
+        },
+        floatingActionButton = floatingActionButton,
+        content = content
+    )
+}
 
 @Composable
 fun AppCard(
@@ -46,17 +87,39 @@ fun AppCard(
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(16.dp)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Card)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .border(1.dp, Line, shape)
-            .padding(16.dp),
-        content = content
-    )
+    val body: @Composable ColumnScope.() -> Unit = {
+        Column(Modifier.padding(16.dp), content = content)
+    }
+    if (onClick != null) {
+        OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth(), content = body)
+    } else {
+        OutlinedCard(modifier = modifier.fillMaxWidth(), content = body)
+    }
+}
+
+@Composable
+fun AppListCard(
+    title: String,
+    subtitle: String? = null,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    leading: @Composable (() -> Unit)? = null,
+    trailing: @Composable (() -> Unit)? = null
+) {
+    val item: @Composable () -> Unit = {
+        ListItem(
+            headlineContent = { Text(title) },
+            supportingContent = subtitle?.let { { Text(it) } },
+            leadingContent = leading,
+            trailingContent = trailing,
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+        )
+    }
+    if (onClick != null) {
+        OutlinedCard(onClick = onClick, modifier = modifier.fillMaxWidth()) { item() }
+    } else {
+        OutlinedCard(modifier = modifier.fillMaxWidth()) { item() }
+    }
 }
 
 @Composable
@@ -64,38 +127,74 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
         modifier = modifier.padding(vertical = 8.dp)
     )
 }
 
 @Composable
 fun KpiTile(title: String, value: String, caption: String? = null, modifier: Modifier = Modifier) {
-    AppCard(modifier = modifier) {
-        Text(title, style = MaterialTheme.typography.labelMedium, color = InkMute)
-        Spacer(Modifier.height(6.dp))
-        Text(value, style = MaterialTheme.typography.headlineMedium)
-        if (caption != null) {
-            Spacer(Modifier.height(4.dp))
-            Text(caption, style = MaterialTheme.typography.bodyMedium)
+    ElevatedCard(
+        modifier = modifier,
+        colors = CardDefaults.elevatedCardColors()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(6.dp))
+            Text(value, style = MaterialTheme.typography.headlineMedium)
+            if (caption != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(caption, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
 
 @Composable
 fun StatusChip(status: StockStatus, modifier: Modifier = Modifier) {
-    val (label, bg, fg) = when (status) {
-        StockStatus.OK -> Triple("정상", CardAlt, Ink)
-        StockStatus.LOW -> Triple("안전재고", Ink, Color.White)
-        StockStatus.CRITICAL -> Triple("재고없음", Ink, Color.White)
+    val scheme = MaterialTheme.colorScheme
+    val (label, container, labelColor) = when (status) {
+        StockStatus.OK -> Triple("정상", scheme.secondaryContainer, scheme.onSecondaryContainer)
+        StockStatus.LOW -> Triple("안전재고", scheme.tertiaryContainer, scheme.onTertiaryContainer)
+        StockStatus.CRITICAL -> Triple("재고없음", scheme.errorContainer, scheme.onErrorContainer)
     }
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(bg)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) {
-        Text(label, color = fg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-    }
+    AssistChip(
+        onClick = {},
+        label = { Text(label) },
+        modifier = modifier,
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = container,
+            labelColor = labelColor
+        )
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    SearchBar(
+        inputField = {
+            SearchBarDefaults.InputField(
+                query = query,
+                onQueryChange = onQueryChange,
+                onSearch = {},
+                expanded = false,
+                onExpandedChange = {},
+                placeholder = { Text(placeholder) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+            )
+        },
+        expanded = false,
+        onExpandedChange = {},
+        modifier = modifier.fillMaxWidth(),
+        colors = SearchBarDefaults.colors(),
+        windowInsets = WindowInsets(0)
+    ) {}
 }
 
 @Composable
@@ -117,8 +216,11 @@ fun NumberField(
         enabled = enabled,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        trailingIcon = if (suffix != null) ({ Text(suffix, color = InkMute, modifier = Modifier.padding(end = 8.dp)) }) else null,
-        colors = fieldColors()
+        trailingIcon = if (suffix != null) {
+            { Text(suffix, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp)) }
+        } else {
+            null
+        }
     )
 }
 
@@ -137,18 +239,27 @@ fun TextFieldPlain(
         label = { Text(label) },
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
-        singleLine = singleLine,
-        colors = fieldColors()
+        singleLine = singleLine
     )
 }
 
 @Composable
-fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Ink,
-    unfocusedBorderColor = Line,
-    focusedLabelColor = Ink,
-    cursorColor = Ink
-)
+fun PasswordField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+    )
+}
 
 @Composable
 fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
@@ -157,11 +268,9 @@ fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean 
         enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Color.White, disabledContainerColor = CardAlt, disabledContentColor = InkMute)
+            .height(52.dp)
     ) {
-        Text(text, style = MaterialTheme.typography.titleSmall, color = Color.White)
+        Text(text, style = MaterialTheme.typography.titleSmall)
     }
 }
 
@@ -172,9 +281,7 @@ fun GhostButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = 
         enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink)
+            .height(52.dp)
     ) {
         Text(text, style = MaterialTheme.typography.titleSmall)
     }
@@ -193,25 +300,17 @@ fun MonthSwitcher(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Surface(
-            onClick = onPrev,
-            shape = RoundedCornerShape(12.dp),
-            color = CardAlt,
-            modifier = Modifier.size(44.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) { Text("‹", style = MaterialTheme.typography.titleLarge) }
+        FilledTonalIconButton(onClick = onPrev) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "이전 달")
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(label, style = MaterialTheme.typography.titleLarge)
-            if (closed) Text("마감됨", style = MaterialTheme.typography.labelMedium, color = InkMute)
+            if (closed) {
+                Text("마감됨", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        Surface(
-            onClick = onNext,
-            shape = RoundedCornerShape(12.dp),
-            color = CardAlt,
-            modifier = Modifier.size(44.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) { Text("›", style = MaterialTheme.typography.titleLarge) }
+        FilledTonalIconButton(onClick = onNext) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "다음 달")
         }
     }
 }
@@ -223,23 +322,46 @@ fun TwoCol(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Un
 
 @Composable
 fun KeyValue(key: String, value: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(key, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.width(12.dp))
-        Text(value, style = MaterialTheme.typography.titleSmall)
+    Row(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            key,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f),
+            textAlign = TextAlign.End
+        )
     }
 }
 
 @Composable
 fun LockedBanner(visible: Boolean) {
     if (!visible) return
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(CardAlt)
-            .padding(12.dp)
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        )
     ) {
-        Text("이 달은 마감되어 실적을 수정하지 않습니다. 관리책임자만 마감을 해제할 수 있습니다.", style = MaterialTheme.typography.bodyMedium)
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.Lock, contentDescription = null)
+            Text(
+                "이 달은 마감되어 실적을 수정하지 않습니다. 관리책임자만 마감을 해제할 수 있습니다.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }

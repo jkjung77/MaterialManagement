@@ -6,17 +6,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,8 +22,8 @@ import kr.baraplt.material.domain.formatQty
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.AppCard
+import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.GhostButton
-import kr.baraplt.material.ui.theme.Card
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,15 +36,7 @@ fun HistoryScreen(
     val materials = state.workspace?.materials?.associateBy { it.id }.orEmpty()
     val rows = state.workspace?.movements.orEmpty()
         .filter { type == null || it.type == type }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("입출고 이력") },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Card)
-            )
-        }
-    ) { padding ->
+    AppScreenScaffold(title = "입출고 이력", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             contentPadding = PaddingValues(bottom = 24.dp),

@@ -1,9 +1,11 @@
 # 자재관리 앱 — 서버 API 항목 명세
 
-대상: 회사 서버 개발자  
-클라이언트: Android 앱 `kr.baraplt.material` (현재는 단말 Room DB만 사용)  
-목적: 관리책임자 1명 + 담당자 최대 3명이 **동시에** 입고·생산·폐기를 넣고, 재고 정본을 서버에 둔다.  
-현장: 통신·와이파이가 약함 → **오프라인 입력 후 통신 될 때 동기화**가 필수.
+대상: 회사 서버 개발자 (이후 이 저장소에서 서버 구축 예정)  
+클라이언트: Android 앱 `kr.baraplt.material`  
+목적: **공장마다** 같은 공장 ID를 쓰는 여러 명이 입고·생산·폐기를 넣고, 재고 정본을 서버에 둔다.  
+현장: 통신이 약함 → 오프라인 입력 후 통신될 때 동기화. 담당자는 **휴대폰 통신사 데이터**로 접속한다. 사내망·IP 화이트리스트만으로는 운영하지 않는다.
+
+앱(2026-09-14 이후): 공장 ID + 공장 암호로 입장. 공장마다 로컬 DB가 갈린다. 서버가 생기면 같은 ID·암호로 묶는다.
 
 ---
 
@@ -18,13 +20,13 @@
 
 ### 1.2 하지 않는 일 (1차)
 - 바코드, 발주서, 출하 SCM, 완제품 일 판매실적
-- 외부 클라우드(Firebase 등) — 단가·재고는 사내만
+- Firebase 등 외부 BaaS. 정본은 **회사 서버(자체 호스팅 Supabase/PostgreSQL)** 만.
 
 ### 1.3 규모
-- 자재 번호 1~500 (현재 약 300)
-- 단품 1~500 (현재 약 370), 단품당 투입자재 최대 30
-- 완제품 1~26, 완제품당 구성 단품 최대 15
-- 동시 사용자 약 3명
+- 공장(워크스페이스) 여러 개. 예: `경주1공장`, `경주2공장`, `성남공장`
+- 공장당 자재 번호 1~500, 단품 1~500(BOM 최대 30), 완제품 1~26(구성 최대 15)
+- 공장당 동시 사용자 약 3명 (관리책임자 1 + 담당)
+- 공장 간 데이터는 **완전히 분리**. 다른 공장 ID로는 조회·수정 불가.
 
 ### 1.4 정본
 **서버가 정본.** 폰은 캐시 + 미전송 큐.  
@@ -49,14 +51,16 @@
 
 | 항목 | 값 |
 |---|---|
-| 프로토콜 | HTTPS, JSON, UTF-8 |
-| 인증 | `Authorization: Bearer {accessToken}` |
+| 프로토콜 | HTTPS, JSON, UTF-8. 앱은 HTTPS만. PostgreSQL 5432는 외부 비공개 |
+| 인증 | `Authorization: Bearer {accessToken}` — 토큰에 **공장(workspace)** 범위가 들어간다 |
+| 공장 ID | 문자열. trim. 1~32자. 예: `경주1공장`. 대소문자·공백까지 포함해 **정규화 후 동일하면 같은 공장** |
 | 날짜 | `YYYY-MM-DD` (예: `2026-08-13`) |
 | 년월 | `YYYY-MM` (예: `2026-08`) |
 | 시각 | Unix epoch **밀리초** (`updatedAt`, `createdAt`, `closedAt`) |
 | 수량 | 소수 허용 (원단 m, 수지 kg). 생산수량은 정수 |
 | 금액 | 원, 소수 가능. 표시는 반올림 |
-| ID | 서버가 발급하는 정수. 앱 로컬 ID와 다름. 동기화 시 `serverId` 사용 |
+| 행 ID | 서버가 발급하는 정수. 앱 로컬 PK와 다름. 동기화 시 `serverId` |
+| 테넌트 | 모든 업무 테이블에 `workspaceId`. unique는 **공장 안**에서만 (예: 자재 codeNo는 공장당 unique) |
 | 삭제 | 물리 삭제 대신 `isActive=false` (마스터). 이력(입출고·생산)은 마감 전이면 삭제 API |
 | 페이지 | 목록은 `limit`(기본 200) / `offset` 또는 `updatedSince` |
 | 오류 | 아래 4.9 |
@@ -81,40 +85,73 @@
 }
 ```
 
-사내망 또는 VPN. CORS는 앱만 쓰면 불필요.
+공개 서브도메인(희망 `https://material.jayoo.kr`)으로 앱이 붙는다. CORS는 앱만 쓰면 불필요. IP 고정이 불가하므로 방화벽에서 앱 HTTPS만 열고 DB 포트는 막는다.
 
 ---
 
-## 3. 권한
+## 3. 권한과 공장 입장
 
-| 역할 | 할 수 있는 것 |
+두 겹이다. **공장 암호**와 **역할(PIN/계정)** 을 섞지 않는다.
+
+| 구분 | 앱(현재) | 서버 |
+|---|---|---|
+| 공장 입장 | 공장 ID + 공장 암호 (4~32자). 같은 공장 사람이 공유 | `Workspace.passwordHash`. 로그인 성공 시 그 공장 토큰 |
+| 역할 | 단말 PIN. `MANAGER` / `STAFF` | 같은 공장 안의 User.role |
+
+| 역할 | 할 수 있는 것 (그 공장 데이터만) |
 |---|---|
-| `STAFF` | 입고, 반출, 폐기, 단품 일 생산 입력/수정(미마감 달), 조회, 동기화 |
-| `MANAGER` | STAFF 전부 + 자재/단품/완제품/BOM/계획 등록·수정, 시작재고, 재고조사 승인, 월 마감/해제, 사용자 관리 |
+| `STAFF` | 입고, 반출, 폐기, 단품 일 생산, 조회, 동기화 |
+| `MANAGER` | STAFF 전부 + 마스터·시작재고·재고조사 승인·마감·그 공장 사용자 |
 
-계정은 서버가 만든다. 1차 계정 예: 관리책임자 1, 생산/자재/출하 담당 각 1.
+1차 로그인(앱과 맞춤):
+
+```json
+{ "workspaceId": "경주1공장", "password": "공장암호", "staffName": "담당자" }
+```
+
+- 공장 ID·암호가 맞으면 토큰 발급. `staffName`은 이력 `createdBy` 표시용.
+- 역할은 서버 User가 있으면 그 값, 없으면 기본 `STAFF`. MANAGER 승격은 공장 관리자/PIN.
+- **공장 ID만으로 입장 불가.** 암호 없으면 `WORKSPACE_AUTH`.
+- 다른 공장 토큰으로 경주1공장 데이터를 읽으면 `FORBIDDEN`.
+
+2차: 공장마다 loginId/비밀번호를 따로 둘 수 있다. 그래도 모든 행은 `workspaceId`로 격리한다.
 
 ---
 
 ## 4. 리소스(테이블) 항목
 
-서버 PK는 `id`. 앱은 동기화 후 `serverId`를 보관한다.
+서버 PK는 `id`. 앱은 동기화 후 `serverId`를 보관한다.  
+아래 업무 테이블은 모두 **`workspaceId`를 가진다.** unique는 `(workspaceId, …)` 기준.
+
+### 4.0 Workspace (공장)
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| id | long | 서버 PK |
+| code | string | 공장 ID. 앱과 동일. 1~32자, trim 후 unique. 예: `경주1공장` |
+| name | string | 표시명. 없으면 `code`와 같음 |
+| passwordHash | (서버만) | 공장 공유 암호. 앱은 SHA-256(`material|{code}|{암호}`)를 쓰지만 **서버는 bcrypt/argon2를 권장**. 앱 해시를 그대로 쓰지 말 것 |
+| isActive | bool | false면 입장 거부 |
+| createdAt | long | |
+
+앱 로컬 DB 파일명: `material_{code}.db` (파일에 못 쓰는 글자는 `_`). 서버는 파일이 아니라 `workspaceId` 컬럼으로 나눈다.
 
 ### 4.1 User
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | long | |
-| loginId | string | 로그인 ID |
+| workspaceId | long | 소속 공장 |
+| loginId | string | 선택. 1차는 비워도 됨 |
 | name | string | 표시 이름 (정길모, 담당자) |
 | role | `MANAGER` \| `STAFF` | |
 | isActive | bool | |
-| passwordHash | (서버만) | |
+| passwordHash | (서버만) | 개인 계정용. 공장 암호와 별개 |
 
 ### 4.2 Material (자재)
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
-| codeNo | int | 1~500, unique |
+| workspaceId | long | |
+| codeNo | int | 1~500, unique **(workspaceId + codeNo)** |
 | name | string | 자재명(품목) |
 | unit | string | `ea` / `kg` / `m` / `roll` 등 |
 | packUnit | string | 선택. 예: `500(포대)` |
@@ -130,8 +167,9 @@
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
+| workspaceId | long | |
 | materialId | long | |
-| yearMonth | string | unique (materialId + yearMonth) |
+| yearMonth | string | unique (workspaceId + materialId + yearMonth) |
 | qty | number | |
 
 마감 시 서버가 다음 달 row를 현재고로 upsert.
@@ -140,7 +178,8 @@
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | id | long | |
-| clientUid | string | **서버 신규.** 앱 UUID. 중복 업로드 방지. unique |
+| workspaceId | long | |
+| clientUid | string | **서버 신규.** 앱 UUID. unique는 공장 안 또는 전역 |
 | materialId | long | |
 | type | string | `INBOUND` 입고 / `OUTBOUND` 반출 / `SCRAP` 폐기 / `ADJUST` 재고조정 |
 | qty | number | ADJUST만 음수 가능 (실사 < 장부) |
@@ -156,7 +195,8 @@
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
-| codeNo | int | 1~500 unique |
+| workspaceId | long | |
+| codeNo | int | 1~500 unique (workspaceId + codeNo) |
 | name | string | FRT, CTR, STEP1 … |
 | sellPrice | number | 단품판매단가 |
 | isActive | bool | |
@@ -166,6 +206,7 @@
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
+| workspaceId | long | |
 | productId | long | |
 | materialId | long | unique (productId + materialId) |
 | usQty | number | 대당 사용량 US. 0 초과 |
@@ -177,8 +218,9 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
+| workspaceId | long | |
 | clientUid | string | **서버 신규.** UUID unique |
-| productId | long | unique (productId + workDate) |
+| productId | long | unique (workspaceId + productId + workDate) |
 | workDate | date | |
 | qty | int | 0이면 삭제와 동일 |
 | updatedAt | long | **서버 권장.** 현재 앱에는 없음 |
@@ -189,7 +231,8 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 ### 4.8 ProductPlan (단품 월 계획)
 | 필드 | 타입 | |
 |---|---|---|
-| productId | long | unique with yearMonth |
+| workspaceId | long | |
+| productId | long | unique (workspaceId + productId + yearMonth) |
 | yearMonth | string | |
 | qty | int | |
 
@@ -197,7 +240,8 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 | 필드 | 타입 | 제약 |
 |---|---|---|
 | id | long | |
-| codeNo | int | 1~26 unique |
+| workspaceId | long | |
+| codeNo | int | 1~26 unique (workspaceId + codeNo) |
 | name | string | A1SPK 등 |
 | sellPrice | number | |
 | isActive | bool | |
@@ -205,6 +249,7 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 ### 4.10 FinishedComposition
 | 필드 | 타입 | |
 |---|---|---|
+| workspaceId | long | |
 | finishedGoodId | long | |
 | productId | long | unique pair, 최대 15 |
 | sortOrder | int | |
@@ -214,7 +259,8 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 ### 4.11 MonthlyPlan (완제품 월 계획)
 | 필드 | 타입 | |
 |---|---|---|
-| finishedGoodId | long | unique with yearMonth |
+| workspaceId | long | |
+| finishedGoodId | long | unique (workspaceId + finishedGoodId + yearMonth) |
 | yearMonth | string | |
 | qty | int | |
 
@@ -223,7 +269,8 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 ### 4.12 MonthClose
 | 필드 | 타입 | |
 |---|---|---|
-| yearMonth | string | PK |
+| workspaceId | long | PK와 함께 |
+| yearMonth | string | unique (workspaceId + yearMonth) |
 | closedAt | long | |
 | closedBy | long | user id. 현재 앱 JSON은 문자열 |
 
@@ -231,13 +278,19 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 
 ## 5. API 목록
 
-Base path 예: `https://{사내호스트}/api/v1`
+Base path 예: `https://material.jayoo.kr/api/v1` (도메인 확정 전 가칭)
+
+모든 업무 API는 토큰의 `workspaceId`만 본다. URL에 공장을 넣지 않아도 된다.
 
 ### 5.1 인증
 
 #### `POST /auth/login`
 ```json
-{ "loginId": "jung", "password": "..." }
+{
+  "workspaceId": "경주1공장",
+  "password": "공장공유암호",
+  "staffName": "담당자"
+}
 ```
 응답:
 ```json
@@ -245,9 +298,17 @@ Base path 예: `https://{사내호스트}/api/v1`
   "accessToken": "...",
   "expiresIn": 86400,
   "refreshToken": "...",
-  "user": { "id": 1, "name": "정길모", "role": "MANAGER" }
+  "workspace": { "id": 10, "code": "경주1공장" },
+  "user": { "id": 1, "name": "담당자", "role": "STAFF" }
 }
 ```
+
+#### `POST /workspaces` (MANAGER 또는 초기 부트스트랩)
+공장 생성. body: `{ "code", "password", "name?" }`  
+이미 있는 code → `409 DUPLICATE_WORKSPACE`.
+
+#### `PUT /workspaces/me/password` (그 공장 MANAGER)
+공장 암호 변경. 기존 토큰은 무효화하는 것을 권장.
 
 #### `POST /auth/refresh`
 #### `POST /auth/logout`
@@ -264,6 +325,7 @@ Base path 예: `https://{사내호스트}/api/v1`
 응답 `data`:
 ```json
 {
+  "workspace": { "id": 10, "code": "경주1공장" },
   "yearMonth": "2026-08",
   "closed": false,
   "serverTime": 1773123456789,
@@ -295,6 +357,7 @@ Base path 예: `https://{사내호스트}/api/v1`
 ```json
 {
   "deviceId": "android-xxxxxxxx",
+  "workspaceId": "경주1공장",
   "movements": [
     {
       "clientUid": "550e8400-e29b-41d4-a716-446655440000",
@@ -343,7 +406,7 @@ Base path 예: `https://{사내호스트}/api/v1`
 | GET/POST/PUT | `/finished-goods` | 완제품 |
 | PUT | `/finished-goods/{id}/composition` | 단품 id 배열 최대 15 |
 
-`codeNo` 중복 → `409 DUPLICATE_CODE`.
+같은 공장 안 `codeNo` 중복 → `409 DUPLICATE_CODE`. 다른 공장은 같은 번호 허용.
 
 ### 5.4 시작재고 · 계획 (MANAGER)
 
@@ -465,9 +528,12 @@ Base path 예: `https://{사내호스트}/api/v1`
 | code | HTTP | 의미 |
 |---|---|---|
 | UNAUTHORIZED | 401 | 토큰 없음/만료 |
-| FORBIDDEN | 403 | 역할 부족 |
+| WORKSPACE_AUTH | 401 | 공장 ID 또는 공장 암호 불일치 |
+| WORKSPACE_INACTIVE | 403 | 공장 사용 중지 |
+| FORBIDDEN | 403 | 역할 부족이거나 **다른 공장** 데이터 |
 | MONTH_CLOSED | 409 | 마감된 달 수정 |
-| DUPLICATE_CODE | 409 | codeNo 중복 |
+| DUPLICATE_CODE | 409 | 그 공장에서 codeNo 중복 |
+| DUPLICATE_WORKSPACE | 409 | 공장 ID(code) 이미 있음 |
 | DUPLICATE_UID | 200 + accepted | clientUid 이미 처리(성공으로 봐도 됨) |
 | NOT_FOUND | 404 | |
 | VALIDATION | 400 | 번호 범위, BOM 30 초과 등 |
@@ -481,25 +547,25 @@ Base path 예: `https://{사내호스트}/api/v1`
 
 ## 7. 앱 동기화 동작 (서버가 알면 좋은 것)
 
-1. 가능하면 `GET /sync/snapshot` 또는 `/sync/changes`.
-2. 사용자는 오프라인으로 입력 → 폰 큐에 `clientUid`와 함께 저장.
-3. 통신되면 `POST /sync/push` → 성공한 uid는 큐에서 제거.
-4. 실패 `MONTH_CLOSED` / `FORBIDDEN`은 사용자에게 보여주고 큐에서 빼거나 보류.
-5. 앱에 “미전송 N건” 표시.
+1. 앱 첫 화면에서 공장 ID·암호 입력 → `POST /auth/login`.
+2. 그 공장 로컬 DB만 연다. 공장을 바꾸면 다른 로컬 DB로 전환.
+3. `GET /sync/snapshot` 또는 `/sync/changes` (토큰 공장만).
+4. 오프라인 입력 → 폰 큐에 `clientUid` → 통신되면 `POST /sync/push`.
+5. `MONTH_CLOSED` / `FORBIDDEN` / `WORKSPACE_AUTH`는 사용자에게 표시.
+6. 앱에 “미전송 N건”.
 
-푸시(FCM)는 1차 불필요. 당김(pull)만.
+푸시(FCM)는 1차 불필요. 당김(pull)만.  
+엑셀 저장(`설정 → 엑셀로 저장`)은 **단말 기능**. 서버 import API는 1차 없음. JSON 백업도 공장 단위.
 
 ---
 
 ## 8. 1차 / 2차 나눔
 
-**1차 (동시 사용 최소)**  
-`/auth/login`, `/sync/snapshot`, `/sync/push`, `/months/{ym}/close`, `/stocktake`
-
-마스터 등록은 관리자 웹 또는 같은 API. 앱의 기존 화면과 필드가 1:1이다.
+**1차 (공장 분리 + 동시 사용)**  
+`/auth/login`(공장 ID+암호), `/workspaces`, `/sync/snapshot`, `/sync/push`, `/months/{ym}/close`, `/stocktake`
 
 **2차**  
-`/sync/changes`, `/reports`, 사용자 관리 UI, 감사 로그, 첨부 사진.
+`/sync/changes`, `/reports`, 공장별 사용자 계정, 감사 로그, 엑셀 서버 반입.
 
 ---
 
@@ -519,19 +585,22 @@ Base path 예: `https://{사내호스트}/api/v1`
 
 ## 10. 보안·운영
 
-- HTTPS, 사내망/VPN.
-- 비밀번호는 해시. 토큰 만료 짧게, refresh 사용.
-- 감사: movements/production에 createdBy, 마감 closedBy.
-- 백업: DB 일일 백업. 앱 JSON 백업은 비상용으로 유지.
-- 개인정보: 이름·로그인 ID만. 위치·주소록 없음.
-- Play 스토어에 올릴 경우 앱에 인터넷 권한·데이터 보안 문구를 다시 작성해야 함 (현재 빌드는 수집 없음).
+- HTTPS만. 희망 호스트 `material.jayoo.kr`. 5432는 외부 차단.
+- 공장 암호·개인 암호는 서버에서 해시(bcrypt/argon2). 앱 로컬 SHA-256은 단말 확인용일 뿐 서버 저장 형식이 아님.
+- 토큰에 workspace 범위. 쿼리마다 `WHERE workspace_id = token.workspace`.
+- 휴대폰 회선 접속 → IP 화이트리스트 사용 금지.
+- 감사: createdBy, closedBy. 가능하면 workspaceId 로그.
+- 백업: DB 일일 + 공장 단위. 앱 JSON/xlsx는 비상·열람용.
+- 개인정보: 이름·공장 ID. 위치·주소록 없음.
+- 앱은 업데이트 확인용 인터넷 권한이 있다. Play 데이터 보안은 “업데이트·동기화 시 전송, 자재 데이터는 서버 연동 후에만”으로 맞출 것.
 
 ---
 
 ## 11. 앱 쪽에서 바로 줄 수 있는 것
 
 - 이 명세
-- 앱 백업 JSON 샘플 (`설정 → 백업 내보내기`) — 테이블과 필드가 같음
-- 문의: Android `kr.baraplt.material` / 패키지 필드명은 위와 동일
+- 앱 백업 JSON (`설정 → 백업 내보내기`) — 필드명은 같음. `workspaceId`는 아직 JSON에 없음. import 시 요청한 공장에 넣으면 된다
+- 엑셀 내보내기는 열람용. 서버 스키마 원본이 아님
+- 패키지 `kr.baraplt.material`
 
-서버는 **JSON을 받아 DB에 넣고 snapshot을 돌려주면** 앱 연동 1차가 된다.
+서버 1차: **공장을 만들고**, JSON을 그 공장에 넣은 뒤, 같은 공장 토큰으로 snapshot을 돌려주면 앱 연동이 된다.

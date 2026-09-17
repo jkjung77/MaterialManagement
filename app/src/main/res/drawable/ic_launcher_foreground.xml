@@ -4,16 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- 원단 롤: 흰 고리 + 중심 코어 + 오른쪽 아래 풀린 끝 -->
     <path
-        android:fillColor="#F5F5F5"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,27.5A24.5,24.5 0,1 1,53.99 27.5Z M54,42.5A9.5,9.5 0,1 0,54.01 42.5Z" />
     <path
-        android:fillColor="#1C1C1C"
-        android:pathData="M28,34h52v8h-52z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,46.5A5.5,5.5 0,1 1,53.99 46.5Z" />
     <path
-        android:fillColor="#4A4A4A"
-        android:pathData="M32,46h44v28h-44z" />
-    <path
-        android:fillColor="#F5F5F5"
-        android:pathData="M40,54h28v4h-28zM40,62h20v4h-20z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,65.5h30v9.5h-30z" />
 </vector>

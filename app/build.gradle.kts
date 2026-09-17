@@ -15,8 +15,8 @@ android {
         applicationId = "kr.baraplt.material"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 6
+        versionName = "1.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -65,6 +65,12 @@ android {
 }
 
 dependencies {
+    constraints {
+        implementation(libs.androidx.fragment) {
+            because("ActivityResult APIs require androidx.fragment 1.3.0 or newer")
+        }
+    }
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -81,6 +87,8 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.google.play.app.update)
+    implementation(libs.google.play.app.update.ktx)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

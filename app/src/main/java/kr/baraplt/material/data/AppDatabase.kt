@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import java.io.File
+import kr.baraplt.material.domain.WorkspaceId
 import kr.baraplt.material.data.dao.BomDao
 import kr.baraplt.material.data.dao.CompositionDao
 import kr.baraplt.material.data.dao.FinishedDao
@@ -58,9 +60,27 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun closes(): MonthCloseDao
 
     companion object {
-        fun create(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "material.db")
+        fun create(context: Context, workspaceId: String): AppDatabase {
+            val fileName = resolveFileName(context, workspaceId)
+            return Room.databaseBuilder(context, AppDatabase::class.java, fileName)
                 .fallbackToDestructiveMigration()
                 .build()
+        }
+
+        internal fun resolveFileName(context: Context, workspaceId: String): String {
+            val named = WorkspaceId.dbFileName(workspaceId)
+            val namedFile = context.getDatabasePath(named)
+            val legacy = context.getDatabasePath("material.db")
+            if (!namedFile.exists() && legacy.exists()) {
+                renameDb(legacy, namedFile)
+            }
+            return named
+        }
+
+        private fun renameDb(from: File, to: File) {
+            from.renameTo(to)
+            File(from.path + "-wal").takeIf { it.exists() }?.renameTo(File(to.path + "-wal"))
+            File(from.path + "-shm").takeIf { it.exists() }?.renameTo(File(to.path + "-shm"))
+        }
     }
 }
