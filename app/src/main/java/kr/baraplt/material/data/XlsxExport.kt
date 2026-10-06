@@ -9,6 +9,8 @@ object XlsxExport {
         val materialName = bundle.materials.associate { it.id to "${it.codeNo} ${it.name}" }
         val productName = bundle.products.associate { it.id to "${it.codeNo} ${it.name}" }
         val finishedName = bundle.finished.associate { it.id to "${it.codeNo} ${it.name}" }
+        val productById = bundle.products.associateBy { it.id }
+        val materialById = bundle.materials.associateBy { it.id }
         val typeLabel = MovementType.entries.associate { it.name to it.label }
 
         val sheets = buildList {
@@ -115,11 +117,18 @@ object XlsxExport {
             add(
                 XlsxWriter.Sheet(
                     "BOM",
-                    listOf(listOf("단품", "자재", "US", "순번")) +
-                        bundle.bom.sortedWith(compareBy({ it.productId }, { it.sortOrder })).map {
+                    listOf(listOf("단품번호", "단품명", "자재번호", "자재명", "단위", "US", "순번")) +
+                        bundle.bom.sortedWith(
+                            compareBy({ productById[it.productId]?.codeNo ?: Int.MAX_VALUE }, { it.sortOrder })
+                        ).map {
+                            val product = productById[it.productId]
+                            val material = materialById[it.materialId]
                             listOf(
-                                productName[it.productId] ?: it.productId,
-                                materialName[it.materialId] ?: it.materialId,
+                                product?.codeNo ?: it.productId,
+                                product?.name.orEmpty(),
+                                material?.codeNo ?: it.materialId,
+                                material?.name.orEmpty(),
+                                material?.unit.orEmpty(),
                                 it.usQty,
                                 it.sortOrder
                             )

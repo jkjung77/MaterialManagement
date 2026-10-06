@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import uuid
@@ -8,7 +9,7 @@ from typing import Any
 import asyncpg
 import jwt
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from auth import ACCESS_SECONDS, decode_token, hash_password, issue_tokens, now_ms, verify_password
 from stock import (
@@ -30,6 +31,55 @@ TYPES = {"INBOUND", "OUTBOUND", "SCRAP", "ADJUST"}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], min_size=1, max_size=8)
+    async with app.state.pool.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS item_photos (
+                workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                code_no INT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                image BYTEA NOT NULL,
+                PRIMARY KEY (workspace_id, kind, code_no)
+            )
+            """
+        )
+        await conn.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS barcode TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS screen_labels TEXT NOT NULL DEFAULT '{}'")
+        await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS safety_stock INT NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE finished_composition ADD COLUMN IF NOT EXISTS qty INT NOT NULL DEFAULT 1")
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_openings (
+                id BIGSERIAL PRIMARY KEY,
+                workspace_id BIGINT NOT NULL REFERENCES workspaces(id),
+                product_id BIGINT NOT NULL REFERENCES products(id),
+                year_month CHAR(7) NOT NULL,
+                qty INT NOT NULL,
+                UNIQUE (workspace_id, product_id, year_month)
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS finished_production (
+                id BIGSERIAL PRIMARY KEY,
+                workspace_id BIGINT NOT NULL REFERENCES workspaces(id),
+                client_uid VARCHAR(64),
+                finished_good_id BIGINT NOT NULL REFERENCES finished_goods(id),
+                work_date DATE NOT NULL,
+                qty INT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                updated_by BIGINT REFERENCES users(id),
+                UNIQUE (workspace_id, finished_good_id, work_date)
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS finished_production_uid_idx "
+            "ON finished_production (workspace_id, client_uid) WHERE client_uid IS NOT NULL"
+        )
     yield
     await app.state.pool.close()
 
@@ -114,6 +164,47 @@ async def is_closed(pool, workspace_id: int, year_month: str) -> bool:
         year_month,
     )
     return row is not None
+
+
+async def product_currents(pool, workspace_id: int, year_month: str) -> dict[int, int]:
+    start, end = month_range(year_month)
+    products = await pool.fetch(
+        "SELECT id FROM products WHERE workspace_id = $1 AND is_active = TRUE", workspace_id
+    )
+    openings = {
+        r["product_id"]: int(r["qty"])
+        for r in await pool.fetch(
+            "SELECT product_id, qty FROM product_openings WHERE workspace_id = $1 AND year_month = $2",
+            workspace_id,
+            year_month,
+        )
+    }
+    made = {
+        r["product_id"]: int(r["qty"] or 0)
+        for r in await pool.fetch(
+            "SELECT product_id, SUM(qty)::int AS qty FROM daily_production "
+            "WHERE workspace_id = $1 AND work_date >= $2 AND work_date < $3 GROUP BY product_id",
+            workspace_id,
+            start,
+            end,
+        )
+    }
+    used = {
+        r["product_id"]: int(r["qty"] or 0)
+        for r in await pool.fetch(
+            "SELECT c.product_id, SUM(f.qty * GREATEST(c.qty, 1))::int AS qty "
+            "FROM finished_production f JOIN finished_composition c "
+            "ON c.finished_good_id = f.finished_good_id AND c.workspace_id = f.workspace_id "
+            "WHERE f.workspace_id = $1 AND f.work_date >= $2 AND f.work_date < $3 GROUP BY c.product_id",
+            workspace_id,
+            start,
+            end,
+        )
+    }
+    return {
+        p["id"]: openings.get(p["id"], 0) + made.get(p["id"], 0) - used.get(p["id"], 0)
+        for p in products
+    }
 
 
 async def material_currents(pool, workspace_id: int, year_month: str) -> dict[int, dict[str, Any]]:
@@ -265,6 +356,39 @@ async def change_workspace_password(request: Request):
     return ok({"changed": True})
 
 
+LABEL_KEYS = ("title", "materials", "production", "report")
+
+
+def _clean_labels(raw: Any) -> dict:
+    src = raw if isinstance(raw, dict) else {}
+    out = {}
+    for key in LABEL_KEYS:
+        text = re.sub(r"[\r\n\t]", " ", str(src.get(key) or "")).strip()
+        out[key] = text.removeprefix("(").removesuffix(")").strip()[:10]
+    return out
+
+
+@app.put("/api/v1/workspaces/me/labels")
+async def set_screen_labels(request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    body, err = await read_json(request)
+    if err:
+        return err
+    labels = _clean_labels(body)
+    pool: asyncpg.Pool = request.app.state.pool
+    await pool.execute(
+        "UPDATE workspaces SET screen_labels = $1 WHERE id = $2",
+        json.dumps(labels, ensure_ascii=False),
+        user["workspace_id"],
+    )
+    return ok({"labels": labels})
+
+
 @app.post("/api/v1/auth/login")
 async def login(request: Request):
     body, err = await read_json(request)
@@ -339,9 +463,8 @@ async def snapshot(request: Request, yearMonth: str = ""):
     users = await pool.fetch("SELECT id, name, role FROM users WHERE workspace_id = $1 AND is_active = TRUE", wid)
     materials = await pool.fetch("SELECT * FROM materials WHERE workspace_id = $1 ORDER BY code_no", wid)
     openings = await pool.fetch(
-        "SELECT id, material_id, year_month, qty FROM opening_stocks WHERE workspace_id = $1 AND year_month = $2",
+        "SELECT id, material_id, year_month, qty FROM opening_stocks WHERE workspace_id = $1",
         wid,
-        yearMonth,
     )
     movements = await pool.fetch(
         "SELECT * FROM stock_movements WHERE workspace_id = $1 AND occurred_on >= $2 AND occurred_on < $3 ORDER BY id",
@@ -373,9 +496,24 @@ async def snapshot(request: Request, yearMonth: str = ""):
         yearMonth,
     )
     closes = await pool.fetch("SELECT * FROM month_closes WHERE workspace_id = $1", wid)
+    product_openings = await pool.fetch(
+        "SELECT * FROM product_openings WHERE workspace_id = $1",
+        wid,
+    )
+    finished_output = await pool.fetch(
+        "SELECT * FROM finished_production WHERE workspace_id = $1 AND work_date >= $2 AND work_date < $3 ORDER BY work_date",
+        wid,
+        start,
+        end,
+    )
     closed = any(r["year_month"] == yearMonth for r in closes)
+    raw_labels = await pool.fetchval("SELECT screen_labels FROM workspaces WHERE id = $1", wid)
+    try:
+        labels = _clean_labels(json.loads(raw_labels or "{}"))
+    except ValueError:
+        labels = _clean_labels({})
     data = {
-        "workspace": {"id": wid, "code": user["workspace_code"]},
+        "workspace": {"id": wid, "code": user["workspace_code"], "labels": labels},
         "yearMonth": yearMonth,
         "closed": closed,
         "serverTime": now_ms(),
@@ -412,8 +550,17 @@ async def snapshot(request: Request, yearMonth: str = ""):
                 "finishedGoodId": r["finished_good_id"],
                 "productId": r["product_id"],
                 "sortOrder": r["sort_order"],
+                "qty": int(r["qty"] or 1),
             }
             for r in composition
+        ],
+        "productOpenings": [
+            {"id": r["id"], "productId": r["product_id"], "yearMonth": r["year_month"], "qty": r["qty"]}
+            for r in product_openings
+        ],
+        "finishedProduction": [
+            {"id": r["id"], "finishedGoodId": r["finished_good_id"], "workDate": r["work_date"].isoformat(), "qty": r["qty"]}
+            for r in finished_output
         ],
         "monthlyPlans": [
             {"id": r["id"], "finishedGoodId": r["finished_good_id"], "yearMonth": r["year_month"], "qty": r["qty"]}
@@ -500,6 +647,130 @@ async def delete_finished_api(request: Request):
     return ok(result)
 
 
+PHOTO_KINDS = {"material", "product"}
+PHOTO_MAX_BYTES = 400_000
+
+
+def _valid_photo(kind: str, code_no: int) -> bool:
+    return kind in PHOTO_KINDS and 1 <= code_no <= 500
+
+
+@app.get("/api/v1/photos")
+async def photo_index(request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    pool: asyncpg.Pool = request.app.state.pool
+    rows = await pool.fetch(
+        "SELECT kind, code_no, updated_at FROM item_photos WHERE workspace_id = $1 ORDER BY kind, code_no",
+        user["workspace_id"],
+    )
+    return ok(
+        {
+            "items": [
+                {"kind": row["kind"], "codeNo": row["code_no"], "updatedAt": row["updated_at"]}
+                for row in rows
+            ]
+        }
+    )
+
+
+@app.get("/api/v1/photos/{kind}/{code_no}")
+async def photo_get(kind: str, code_no: int, request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    if not _valid_photo(kind, code_no):
+        return fail("BAD_REQUEST", "사진 대상을 확인하세요", 400)
+    pool: asyncpg.Pool = request.app.state.pool
+    row = await pool.fetchrow(
+        "SELECT image, updated_at FROM item_photos WHERE workspace_id = $1 AND kind = $2 AND code_no = $3",
+        user["workspace_id"],
+        kind,
+        code_no,
+    )
+    if row is None:
+        return fail("NOT_FOUND", "사진이 없습니다", 404)
+    return Response(
+        content=bytes(row["image"]),
+        media_type="image/jpeg",
+        headers={"X-Updated-At": str(row["updated_at"])},
+    )
+
+
+@app.put("/api/v1/photos/{kind}/{code_no}")
+async def photo_put(kind: str, code_no: int, request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    if not _valid_photo(kind, code_no):
+        return fail("BAD_REQUEST", "사진 대상을 확인하세요", 400)
+    updated = int(request.headers.get("x-updated-at") or 0)
+    if updated <= 0:
+        return fail("BAD_REQUEST", "사진 시각이 없습니다", 400)
+    raw = await request.body()
+    if not raw or len(raw) > PHOTO_MAX_BYTES:
+        return fail("BAD_REQUEST", "사진 크기를 확인하세요", 400)
+    pool: asyncpg.Pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT updated_at FROM item_photos WHERE workspace_id = $1 AND kind = $2 AND code_no = $3",
+            user["workspace_id"],
+            kind,
+            code_no,
+        )
+        if existing is not None and int(existing["updated_at"]) > updated:
+            return ok({"skipped": True})
+        await conn.execute(
+            """
+            INSERT INTO item_photos (workspace_id, kind, code_no, updated_at, image)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (workspace_id, kind, code_no)
+            DO UPDATE SET updated_at = EXCLUDED.updated_at, image = EXCLUDED.image
+            """,
+            user["workspace_id"],
+            kind,
+            code_no,
+            updated,
+            raw,
+        )
+    return ok({"saved": True})
+
+
+@app.delete("/api/v1/photos/{kind}/{code_no}")
+async def photo_delete(kind: str, code_no: int, request: Request, updatedAt: int = 0):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    if not _valid_photo(kind, code_no):
+        return fail("BAD_REQUEST", "사진 대상을 확인하세요", 400)
+    pool: asyncpg.Pool = request.app.state.pool
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT updated_at FROM item_photos WHERE workspace_id = $1 AND kind = $2 AND code_no = $3",
+            user["workspace_id"],
+            kind,
+            code_no,
+        )
+        if existing is None:
+            return ok({"deleted": True})
+        if int(existing["updated_at"]) > updatedAt:
+            return ok({"skipped": True})
+        await conn.execute(
+            "DELETE FROM item_photos WHERE workspace_id = $1 AND kind = $2 AND code_no = $3",
+            user["workspace_id"],
+            kind,
+            code_no,
+        )
+    return ok({"deleted": True})
+
+
 @app.post("/api/v1/sync/push")
 async def push(request: Request):
     user, err = await current_actor(request)
@@ -515,7 +786,7 @@ async def push(request: Request):
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            maps = {"materials": {}, "products": {}, "finished": {}}
+            maps = {"materials": {}, "products": {}, "finished": {}, "materialCodes": {}, "productCodes": {}}
             if user["role"] == "MANAGER":
                 maps = await _upsert_masters(conn, user["workspace_id"], body)
             for item in body.get("deletedMaterials") or []:
@@ -537,7 +808,10 @@ async def push(request: Request):
             for item in body.get("movements") or []:
                 remapped = dict(item)
                 old = int(item.get("materialId") or 0)
-                if old in maps["materials"]:
+                code_no = int(item.get("codeNo") or 0)
+                if code_no in maps["materialCodes"]:
+                    remapped["materialId"] = maps["materialCodes"][code_no]
+                elif old in maps["materials"]:
                     remapped["materialId"] = maps["materials"][old]
                 result = await _accept_movement(conn, user, remapped)
                 (accepted if "serverId" in result else rejected).append(result)
@@ -545,11 +819,18 @@ async def push(request: Request):
                 remapped = dict(item)
                 old = int(item.get("productId") or 0)
                 code_no = int(item.get("codeNo") or item.get("productCodeNo") or 0)
-                if old in maps["products"]:
+                if code_no in maps["productCodes"]:
+                    remapped["productId"] = maps["productCodes"][code_no]
+                elif old in maps["products"]:
                     remapped["productId"] = maps["products"][old]
-                elif code_no in maps["products"]:
-                    remapped["productId"] = maps["products"][code_no]
                 result = await _accept_production(conn, user, remapped)
+                (accepted if "serverId" in result else rejected).append(result)
+            for item in body.get("finishedProduction") or []:
+                remapped = dict(item)
+                old = int(item.get("finishedGoodId") or 0)
+                if old in maps["finished"]:
+                    remapped["finishedGoodId"] = maps["finished"][old]
+                result = await _accept_finished_production(conn, user, remapped)
                 (accepted if "serverId" in result else rejected).append(result)
     return ok({"accepted": accepted, "rejected": rejected})
 
@@ -571,6 +852,8 @@ async def import_backup(request: Request):
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("DELETE FROM month_closes WHERE workspace_id = $1", wid)
+            await conn.execute("DELETE FROM finished_production WHERE workspace_id = $1", wid)
+            await conn.execute("DELETE FROM product_openings WHERE workspace_id = $1", wid)
             await conn.execute("DELETE FROM monthly_plans WHERE workspace_id = $1", wid)
             await conn.execute("DELETE FROM finished_composition WHERE workspace_id = $1", wid)
             await conn.execute("DELETE FROM product_plans WHERE workspace_id = $1", wid)
@@ -591,6 +874,8 @@ async def import_backup(request: Request):
             await _insert_product_plans(conn, wid, bundle.get("productPlans") or [], prod_map)
             await _insert_composition(conn, wid, bundle.get("composition") or [], fin_map, prod_map)
             await _insert_monthly_plans(conn, wid, bundle.get("monthlyPlans") or [], fin_map)
+            await _insert_product_openings(conn, wid, bundle.get("productOpenings") or [], prod_map)
+            await _insert_finished_production(conn, wid, user, bundle.get("finishedProduction") or [], fin_map)
             await _insert_closes(conn, wid, user, bundle.get("closes") or [])
     return ok(
         {
@@ -643,6 +928,8 @@ async def stocktake(request: Request):
                 if abs(diff) < 0.0001:
                     continue
                 uid = str(item.get("clientUid") or "").strip() or f"stocktake-{year_month}-{code_no or mid}-{occurred_on}"
+                reason = str(item.get("note") or "").strip()
+                note = f"재고조사 조정 · {reason}" if reason else "재고조사 조정"
                 row = await conn.fetchrow(
                     "INSERT INTO stock_movements "
                     "(workspace_id, client_uid, material_id, type, qty, unit_price, occurred_on, note, created_at, created_by, created_by_name) "
@@ -654,7 +941,7 @@ async def stocktake(request: Request):
                     diff,
                     float(snap["row"]["unit_price"]),
                     date.fromisoformat(occurred_on),
-                    "재고조사 조정",
+                    note,
                     now_ms(),
                     user["id"],
                     user["name"],
@@ -679,9 +966,21 @@ async def close_month(year_month: str, request: Request):
     if await is_closed(pool, user["workspace_id"], year_month):
         return fail("CONFLICT", "이미 마감된 달입니다", 409)
     currents = await material_currents(pool, user["workspace_id"], year_month)
+    product_stock = await product_currents(pool, user["workspace_id"], year_month)
     nxt = next_month(year_month)
     async with pool.acquire() as conn:
         async with conn.transaction():
+            claimed = await conn.fetchval(
+                "INSERT INTO month_closes (workspace_id, year_month, closed_at, closed_by, closed_by_name) "
+                "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (workspace_id, year_month) DO NOTHING RETURNING year_month",
+                user["workspace_id"],
+                year_month,
+                now_ms(),
+                user["id"],
+                user["name"],
+            )
+            if claimed is None:
+                return fail("CONFLICT", "이미 마감된 달입니다", 409)
             for mid, snap in currents.items():
                 await conn.execute(
                     "INSERT INTO opening_stocks (workspace_id, material_id, year_month, qty) "
@@ -692,15 +991,16 @@ async def close_month(year_month: str, request: Request):
                     nxt,
                     snap["current"],
                 )
-            await conn.execute(
-                "INSERT INTO month_closes (workspace_id, year_month, closed_at, closed_by, closed_by_name) "
-                "VALUES ($1,$2,$3,$4,$5)",
-                user["workspace_id"],
-                year_month,
-                now_ms(),
-                user["id"],
-                user["name"],
-            )
+            for pid, qty in product_stock.items():
+                await conn.execute(
+                    "INSERT INTO product_openings (workspace_id, product_id, year_month, qty) "
+                    "VALUES ($1,$2,$3,$4) "
+                    "ON CONFLICT (workspace_id, product_id, year_month) DO UPDATE SET qty = EXCLUDED.qty",
+                    user["workspace_id"],
+                    pid,
+                    nxt,
+                    qty,
+                )
     return ok({"yearMonth": year_month, "nextMonth": nxt, "openings": len(currents)})
 
 
@@ -887,6 +1187,7 @@ def _material(r) -> dict[str, Any]:
         "unitPrice": float(r["unit_price"]),
         "safetyStock": float(r["safety_stock"]),
         "leadTimeDays": r["lead_time_days"],
+        "barcode": r["barcode"] or "",
         "note": r["note"],
         "isActive": r["is_active"],
         "updatedAt": r["updated_at"],
@@ -898,9 +1199,11 @@ def _product(r) -> dict[str, Any]:
         "id": r["id"],
         "codeNo": r["code_no"],
         "name": r["name"],
+        "barcode": r["barcode"] or "",
         "sellPrice": float(r["sell_price"]),
         "isActive": r["is_active"],
         "updatedAt": r["updated_at"],
+        "safetyStock": int(r["safety_stock"] or 0),
     }
 
 
@@ -934,24 +1237,11 @@ async def _delete_material(conn, user, item) -> dict[str, Any]:
     if user["role"] != "MANAGER":
         return {"code": "FORBIDDEN", "message": "관리책임자만 할 수 있습니다"}
     wid = user["workspace_id"]
-    row = None
-    mid = int(item.get("id") or 0)
-    code_no = int(item.get("codeNo") or 0)
-    if mid > 0:
-        row = await conn.fetchrow(
-            "SELECT * FROM materials WHERE id = $1 AND workspace_id = $2",
-            mid,
-            wid,
-        )
-    if row is None and code_no > 0:
-        row = await conn.fetchrow(
-            "SELECT * FROM materials WHERE workspace_id = $1 AND code_no = $2",
-            wid,
-            code_no,
-        )
+    row = await _find_master(conn, "materials", user, item)
     if row is None:
         return {"deleted": True, "serverId": 0}
     mid = row["id"]
+    code = int(row["code_no"])
     moves = await conn.fetchval(
         "SELECT COUNT(*) FROM stock_movements WHERE workspace_id = $1 AND material_id = $2",
         wid,
@@ -963,36 +1253,42 @@ async def _delete_material(conn, user, item) -> dict[str, Any]:
         mid,
     )
     if moves:
-        return {"code": "IN_USE", "message": "입출고 이력을 먼저 지우세요"}
+        return {"code": "IN_USE", "kind": "material", "codeNo": code,
+                "message": f"자재 NO.{code}는 입출고 이력이 있어 지우지 않았습니다"}
     if bom:
-        return {"code": "IN_USE", "message": "단품 투입자재에서 먼저 빼세요"}
+        return {"code": "IN_USE", "kind": "material", "codeNo": code,
+                "message": f"자재 NO.{code}는 단품 투입자재에 있어 지우지 않았습니다"}
     await conn.execute(
         "DELETE FROM opening_stocks WHERE workspace_id = $1 AND material_id = $2",
         wid,
         mid,
     )
     await conn.execute("DELETE FROM materials WHERE id = $1 AND workspace_id = $2", mid, wid)
+    await conn.execute(
+        "DELETE FROM item_photos WHERE workspace_id = $1 AND kind = 'material' AND code_no = $2",
+        wid,
+        int(row["code_no"]),
+    )
     return {"deleted": True, "serverId": mid}
 
 
 async def _find_master(conn, table: str, user, item):
     wid = user["workspace_id"]
-    row = None
-    mid = int(item.get("id") or 0)
     code_no = int(item.get("codeNo") or 0)
-    if mid > 0:
-        row = await conn.fetchrow(
-            f"SELECT * FROM {table} WHERE id = $1 AND workspace_id = $2",
-            mid,
-            wid,
-        )
-    if row is None and code_no > 0:
-        row = await conn.fetchrow(
+    if code_no > 0:
+        return await conn.fetchrow(
             f"SELECT * FROM {table} WHERE workspace_id = $1 AND code_no = $2",
             wid,
             code_no,
         )
-    return row
+    mid = int(item.get("id") or 0)
+    if mid <= 0:
+        return None
+    return await conn.fetchrow(
+        f"SELECT * FROM {table} WHERE id = $1 AND workspace_id = $2",
+        mid,
+        wid,
+    )
 
 
 async def _delete_product(conn, user, item) -> dict[str, Any]:
@@ -1013,13 +1309,22 @@ async def _delete_product(conn, user, item) -> dict[str, Any]:
         wid,
         pid,
     )
+    code = int(row["code_no"])
     if production:
-        return {"code": "IN_USE", "message": "생산실적을 먼저 지우세요"}
+        return {"code": "IN_USE", "kind": "product", "codeNo": code,
+                "message": f"단품 NO.{code}는 생산실적이 있어 지우지 않았습니다"}
     if finished:
-        return {"code": "IN_USE", "message": "완제품 구성에서 먼저 빼세요"}
+        return {"code": "IN_USE", "kind": "product", "codeNo": code,
+                "message": f"단품 NO.{code}는 완성품 구성에 있어 지우지 않았습니다"}
+    await conn.execute("DELETE FROM product_openings WHERE workspace_id = $1 AND product_id = $2", wid, pid)
     await conn.execute("DELETE FROM product_bom WHERE workspace_id = $1 AND product_id = $2", wid, pid)
     await conn.execute("DELETE FROM product_plans WHERE workspace_id = $1 AND product_id = $2", wid, pid)
     await conn.execute("DELETE FROM products WHERE id = $1 AND workspace_id = $2", pid, wid)
+    await conn.execute(
+        "DELETE FROM item_photos WHERE workspace_id = $1 AND kind = 'product' AND code_no = $2",
+        wid,
+        int(row["code_no"]),
+    )
     return {"deleted": True, "serverId": pid}
 
 
@@ -1031,6 +1336,15 @@ async def _delete_finished(conn, user, item) -> dict[str, Any]:
     if row is None:
         return {"deleted": True, "serverId": 0}
     fid = row["id"]
+    made = await conn.fetchval(
+        "SELECT COUNT(*) FROM finished_production WHERE workspace_id = $1 AND finished_good_id = $2",
+        wid,
+        fid,
+    )
+    if made:
+        code = int(row["code_no"])
+        return {"code": "IN_USE", "kind": "finished", "codeNo": code,
+                "message": f"완성품 NO.{code}는 실적이 있어 지우지 않았습니다"}
     await conn.execute(
         "DELETE FROM finished_composition WHERE workspace_id = $1 AND finished_good_id = $2",
         wid,
@@ -1068,6 +1382,15 @@ async def _delete_movement(conn, user, item) -> dict[str, Any]:
             )
         ):
             row = found
+        want_code = int(item.get("codeNo") or 0)
+        if row is not None and want_code > 0:
+            found_code = await conn.fetchval(
+                "SELECT code_no FROM materials WHERE id = $1 AND workspace_id = $2",
+                row["material_id"],
+                wid,
+            )
+            if found_code != want_code:
+                row = None
     uid = str(item.get("clientUid") or "").strip()
     if row is None and uid:
         row = await conn.fetchrow(
@@ -1077,16 +1400,14 @@ async def _delete_movement(conn, user, item) -> dict[str, Any]:
         )
     if row is None:
         material_id = int(item.get("materialId") or 0)
-        if material_id <= 0:
-            code_no = int(item.get("codeNo") or 0)
-            if code_no > 0:
-                mat = await conn.fetchrow(
-                    "SELECT id FROM materials WHERE workspace_id = $1 AND code_no = $2",
-                    wid,
-                    code_no,
-                )
-                if mat:
-                    material_id = mat["id"]
+        code_no = int(item.get("codeNo") or 0)
+        if code_no > 0:
+            mat = await conn.fetchrow(
+                "SELECT id FROM materials WHERE workspace_id = $1 AND code_no = $2",
+                wid,
+                code_no,
+            )
+            material_id = mat["id"] if mat else 0
         if material_id > 0 and typ and DATE_RE.match(occurred):
             row = await conn.fetchrow(
                 "SELECT * FROM stock_movements "
@@ -1136,28 +1457,34 @@ async def _accept_movement(conn, user, item) -> dict[str, Any]:
         return {"clientUid": uid, "code": "VALIDATION", "message": "날짜를 확인하세요"}
     if await is_closed(conn, user["workspace_id"], occurred[:7]):
         return {"clientUid": uid, "code": "MONTH_CLOSED", "message": "마감된 달입니다"}
-    mat = await conn.fetchrow(
-        "SELECT id FROM materials WHERE id = $1 AND workspace_id = $2",
-        mid,
-        user["workspace_id"],
-    )
-    if mat is None:
-        code_no = int(item.get("codeNo") or 0)
-        if code_no > 0:
-            mat = await conn.fetchrow(
-                "SELECT id FROM materials WHERE workspace_id = $1 AND code_no = $2",
-                user["workspace_id"],
-                code_no,
-            )
+    mat = None
+    code_no = int(item.get("codeNo") or 0)
+    if code_no > 0:
+        mat = await conn.fetchrow(
+            "SELECT id FROM materials WHERE workspace_id = $1 AND code_no = $2",
+            user["workspace_id"],
+            code_no,
+        )
+    if mat is None and mid > 0:
+        mat = await conn.fetchrow(
+            "SELECT id FROM materials WHERE id = $1 AND workspace_id = $2",
+            mid,
+            user["workspace_id"],
+        )
     if mat is None:
         return {"clientUid": uid, "code": "NOT_FOUND", "message": "자재가 없습니다"}
     mid = mat["id"]
     qty = float(item.get("qty") or 0)
     unit_price = float(item.get("unitPrice") or 0)
+    if typ != "ADJUST" and not qty > 0:
+        return {"clientUid": uid, "code": "VALIDATION", "message": "수량은 0보다 커야 합니다"}
+    # 전체 올리기(import-)로 이미 들어간 같은 내용 행만 한 번 차지한다.
+    # 같은 날 같은 수량 입고가 두 번 있는 것은 정상이라 일반 행과는 합치지 않는다.
     same = await conn.fetchrow(
         "SELECT id FROM stock_movements "
         "WHERE workspace_id = $1 AND material_id = $2 AND type = $3 "
-        "AND qty = $4 AND unit_price = $5 AND occurred_on = $6",
+        "AND qty = $4 AND unit_price = $5 AND occurred_on = $6 "
+        "AND client_uid LIKE 'import-%' ORDER BY id LIMIT 1 FOR UPDATE",
         user["workspace_id"],
         mid,
         typ,
@@ -1166,6 +1493,7 @@ async def _accept_movement(conn, user, item) -> dict[str, Any]:
         date.fromisoformat(occurred),
     )
     if same:
+        await conn.execute("UPDATE stock_movements SET client_uid = $1 WHERE id = $2", uid, same["id"])
         return {"clientUid": uid, "serverId": same["id"]}
     row = await conn.fetchrow(
         "INSERT INTO stock_movements "
@@ -1203,19 +1531,20 @@ async def _accept_production(conn, user, item) -> dict[str, Any]:
     if await is_closed(conn, user["workspace_id"], work_date[:7]):
         return {"clientUid": uid, "code": "MONTH_CLOSED", "message": "마감된 달입니다"}
     pid = int(item.get("productId") or 0)
-    prod = await conn.fetchrow(
-        "SELECT id FROM products WHERE id = $1 AND workspace_id = $2",
-        pid,
-        user["workspace_id"],
-    )
-    if prod is None:
-        code_no = int(item.get("codeNo") or item.get("productCodeNo") or 0)
-        if code_no > 0:
-            prod = await conn.fetchrow(
-                "SELECT id FROM products WHERE workspace_id = $1 AND code_no = $2",
-                user["workspace_id"],
-                code_no,
-            )
+    prod = None
+    code_no = int(item.get("codeNo") or item.get("productCodeNo") or 0)
+    if code_no > 0:
+        prod = await conn.fetchrow(
+            "SELECT id FROM products WHERE workspace_id = $1 AND code_no = $2",
+            user["workspace_id"],
+            code_no,
+        )
+    if prod is None and pid > 0:
+        prod = await conn.fetchrow(
+            "SELECT id FROM products WHERE id = $1 AND workspace_id = $2",
+            pid,
+            user["workspace_id"],
+        )
     if prod is None:
         return {"clientUid": uid, "code": "NOT_FOUND", "message": "단품이 없습니다"}
     pid = prod["id"]
@@ -1244,7 +1573,10 @@ async def _accept_production(conn, user, item) -> dict[str, Any]:
     row = await conn.fetchrow(
         "INSERT INTO daily_production "
         "(workspace_id, client_uid, product_id, work_date, qty, updated_at, updated_by) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+        "VALUES ($1,$2,$3,$4,$5,$6,$7) "
+        "ON CONFLICT (workspace_id, product_id, work_date) DO UPDATE SET "
+        "qty = EXCLUDED.qty, client_uid = EXCLUDED.client_uid, "
+        "updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by RETURNING id",
         user["workspace_id"],
         uid,
         pid,
@@ -1256,21 +1588,99 @@ async def _accept_production(conn, user, item) -> dict[str, Any]:
     return {"clientUid": uid, "serverId": row["id"]}
 
 
+async def _accept_finished_production(conn, user, item) -> dict[str, Any]:
+    wid = user["workspace_id"]
+    uid = str(item.get("clientUid") or "").strip()
+    if not uid:
+        return {"clientUid": uid, "code": "VALIDATION", "message": "clientUid가 필요합니다"}
+    existing = await conn.fetchrow(
+        "SELECT id FROM finished_production WHERE workspace_id = $1 AND client_uid = $2",
+        wid,
+        uid,
+    )
+    if existing:
+        return {"clientUid": uid, "serverId": existing["id"]}
+    work_date = str(item.get("workDate") or "")
+    if not DATE_RE.match(work_date):
+        return {"clientUid": uid, "code": "VALIDATION", "message": "날짜를 확인하세요"}
+    if await is_closed(conn, wid, work_date[:7]):
+        return {"clientUid": uid, "code": "MONTH_CLOSED", "message": "마감된 달입니다"}
+    fin = None
+    code_no = int(item.get("codeNo") or 0)
+    if code_no > 0:
+        fin = await conn.fetchrow(
+            "SELECT id FROM finished_goods WHERE workspace_id = $1 AND code_no = $2",
+            wid,
+            code_no,
+        )
+    fid = int(item.get("finishedGoodId") or 0)
+    if fin is None and fid > 0:
+        fin = await conn.fetchrow(
+            "SELECT id FROM finished_goods WHERE id = $1 AND workspace_id = $2",
+            fid,
+            wid,
+        )
+    if fin is None:
+        return {"clientUid": uid, "code": "NOT_FOUND", "message": "완성품이 없습니다"}
+    fid = fin["id"]
+    qty = int(item.get("qty") or 0)
+    day = date.fromisoformat(work_date)
+    same_day = await conn.fetchrow(
+        "SELECT id FROM finished_production WHERE workspace_id = $1 AND finished_good_id = $2 AND work_date = $3",
+        wid,
+        fid,
+        day,
+    )
+    if qty <= 0:
+        if same_day:
+            await conn.execute("DELETE FROM finished_production WHERE id = $1", same_day["id"])
+            return {"clientUid": uid, "serverId": same_day["id"]}
+        return {"clientUid": uid, "serverId": 0}
+    if same_day:
+        await conn.execute(
+            "UPDATE finished_production SET qty = $1, client_uid = $2, updated_at = $3, updated_by = $4 WHERE id = $5",
+            qty,
+            uid,
+            now_ms(),
+            user["id"],
+            same_day["id"],
+        )
+        return {"clientUid": uid, "serverId": same_day["id"]}
+    row = await conn.fetchrow(
+        "INSERT INTO finished_production "
+        "(workspace_id, client_uid, finished_good_id, work_date, qty, updated_at, updated_by) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7) "
+        "ON CONFLICT (workspace_id, finished_good_id, work_date) DO UPDATE SET "
+        "qty = EXCLUDED.qty, client_uid = EXCLUDED.client_uid, "
+        "updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by RETURNING id",
+        wid,
+        uid,
+        fid,
+        day,
+        qty,
+        now_ms(),
+        user["id"],
+    )
+    return {"clientUid": uid, "serverId": row["id"]}
+
+
 async def _upsert_masters(conn, wid: int, body: dict[str, Any]) -> dict[str, dict[int, int]]:
+    # Phone ids and codeNo share the 1..500 range, so they must never share one dict.
     mat_map: dict[int, int] = {}
+    mat_codes: dict[int, int] = {}
     for item in body.get("materials") or []:
         code_no = int(item.get("codeNo") or 0)
         if code_no <= 0:
             continue
         row = await conn.fetchrow(
             "INSERT INTO materials "
-            "(workspace_id, code_no, name, unit, pack_unit, unit_price, safety_stock, lead_time_days, note, is_active, updated_at) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) "
+            "(workspace_id, code_no, name, unit, pack_unit, unit_price, safety_stock, lead_time_days, note, is_active, updated_at, barcode) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) "
             "ON CONFLICT (workspace_id, code_no) DO UPDATE SET "
             "name = EXCLUDED.name, unit = EXCLUDED.unit, pack_unit = EXCLUDED.pack_unit, "
             "unit_price = EXCLUDED.unit_price, safety_stock = EXCLUDED.safety_stock, "
             "lead_time_days = EXCLUDED.lead_time_days, note = EXCLUDED.note, "
-            "is_active = EXCLUDED.is_active, updated_at = EXCLUDED.updated_at "
+            "is_active = EXCLUDED.is_active, updated_at = EXCLUDED.updated_at, barcode = EXCLUDED.barcode "
             "RETURNING id",
             wid,
             code_no,
@@ -1283,33 +1693,39 @@ async def _upsert_masters(conn, wid: int, body: dict[str, Any]) -> dict[str, dic
             str(item.get("note") or ""),
             bool(item.get("isActive", True)),
             int(item.get("updatedAt") or now_ms()),
+            str(item.get("barcode") or ""),
         )
         old = _id(item)
         if old:
             mat_map[old] = row["id"]
-        mat_map[code_no] = row["id"]
+        mat_codes[code_no] = row["id"]
     prod_map: dict[int, int] = {}
+    prod_codes: dict[int, int] = {}
     for item in body.get("products") or []:
         code_no = int(item.get("codeNo") or 0)
         if code_no <= 0:
             continue
+        safety = int(item["safetyStock"]) if item.get("safetyStock") is not None else None
         row = await conn.fetchrow(
-            "INSERT INTO products (workspace_id, code_no, name, sell_price, is_active, updated_at) "
-            "VALUES ($1,$2,$3,$4,$5,$6) "
+            "INSERT INTO products (workspace_id, code_no, name, sell_price, is_active, updated_at, barcode, safety_stock) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8::int, 0)) "
             "ON CONFLICT (workspace_id, code_no) DO UPDATE SET "
             "name = EXCLUDED.name, sell_price = EXCLUDED.sell_price, "
-            "is_active = EXCLUDED.is_active, updated_at = EXCLUDED.updated_at RETURNING id",
+            "is_active = EXCLUDED.is_active, updated_at = EXCLUDED.updated_at, barcode = EXCLUDED.barcode, "
+            "safety_stock = COALESCE($8::int, products.safety_stock) RETURNING id",
             wid,
             code_no,
             str(item.get("name") or ""),
             float(item.get("sellPrice") or 0),
             bool(item.get("isActive", True)),
             int(item.get("updatedAt") or now_ms()),
+            str(item.get("barcode") or ""),
+            safety,
         )
         old = _id(item)
         if old:
             prod_map[old] = row["id"]
-        prod_map[code_no] = row["id"]
+        prod_codes[code_no] = row["id"]
     fin_map: dict[int, int] = {}
     for item in body.get("finished") or []:
         code_no = int(item.get("codeNo") or 0)
@@ -1331,7 +1747,6 @@ async def _upsert_masters(conn, wid: int, body: dict[str, Any]) -> dict[str, dic
         old = _id(item)
         if old:
             fin_map[old] = row["id"]
-        fin_map[code_no] = row["id"]
     if body.get("bom") is not None:
         await _insert_bom(conn, wid, body.get("bom") or [], prod_map, mat_map)
     if body.get("composition") is not None:
@@ -1339,7 +1754,14 @@ async def _upsert_masters(conn, wid: int, body: dict[str, Any]) -> dict[str, dic
     await _insert_openings(conn, wid, body.get("openings") or [], mat_map)
     await _insert_product_plans(conn, wid, body.get("productPlans") or [], prod_map)
     await _insert_monthly_plans(conn, wid, body.get("monthlyPlans") or [], fin_map)
-    return {"materials": mat_map, "products": prod_map, "finished": fin_map}
+    await _insert_product_openings(conn, wid, body.get("productOpenings") or [], prod_map)
+    return {
+        "materials": mat_map,
+        "products": prod_map,
+        "finished": fin_map,
+        "materialCodes": mat_codes,
+        "productCodes": prod_codes,
+    }
 
 
 def _id(item, key="id") -> int | None:
@@ -1355,8 +1777,8 @@ async def _insert_materials(conn, wid, items):
         old = _id(item)
         row = await conn.fetchrow(
             "INSERT INTO materials "
-            "(workspace_id, code_no, name, unit, pack_unit, unit_price, safety_stock, lead_time_days, note, is_active, updated_at) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
+            "(workspace_id, code_no, name, unit, pack_unit, unit_price, safety_stock, lead_time_days, note, is_active, updated_at, barcode) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id",
             wid,
             int(item.get("codeNo") or 0),
             str(item.get("name") or ""),
@@ -1368,6 +1790,7 @@ async def _insert_materials(conn, wid, items):
             str(item.get("note") or ""),
             bool(item.get("isActive", True)),
             int(item.get("updatedAt") or now_ms()),
+            str(item.get("barcode") or ""),
         )
         if old:
             mapping[old] = row["id"]
@@ -1379,14 +1802,16 @@ async def _insert_products(conn, wid, items):
     for item in items:
         old = _id(item)
         row = await conn.fetchrow(
-            "INSERT INTO products (workspace_id, code_no, name, sell_price, is_active, updated_at) "
-            "VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+            "INSERT INTO products (workspace_id, code_no, name, sell_price, is_active, updated_at, barcode, safety_stock) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
             wid,
             int(item.get("codeNo") or 0),
             str(item.get("name") or ""),
             float(item.get("sellPrice") or 0),
             bool(item.get("isActive", True)),
             int(item.get("updatedAt") or now_ms()),
+            str(item.get("barcode") or ""),
+            int(item.get("safetyStock") or 0),
         )
         if old:
             mapping[old] = row["id"]
@@ -1518,19 +1943,67 @@ async def _insert_product_plans(conn, wid, items, prod_map):
 
 
 async def _insert_composition(conn, wid, items, fin_map, prod_map):
+    # Older apps omit qty; keep the stored quantity instead of resetting it to 1.
+    previous = {
+        (r["finished_good_id"], r["product_id"]): int(r["qty"] or 1)
+        for r in await conn.fetch(
+            "SELECT finished_good_id, product_id, qty FROM finished_composition WHERE workspace_id = $1", wid
+        )
+    }
     await conn.execute("DELETE FROM finished_composition WHERE workspace_id = $1", wid)
     for item in items:
         fid = fin_map.get(_id(item, "finishedGoodId"))
         pid = prod_map.get(_id(item, "productId"))
         if not fid or not pid:
             continue
+        raw_qty = item.get("qty")
+        qty = max(1, int(raw_qty)) if raw_qty is not None else previous.get((fid, pid), 1)
         await conn.execute(
-            "INSERT INTO finished_composition (workspace_id, finished_good_id, product_id, sort_order) "
-            "VALUES ($1,$2,$3,$4) ON CONFLICT (finished_good_id, product_id) DO UPDATE SET sort_order = EXCLUDED.sort_order",
+            "INSERT INTO finished_composition (workspace_id, finished_good_id, product_id, sort_order, qty) "
+            "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (finished_good_id, product_id) "
+            "DO UPDATE SET sort_order = EXCLUDED.sort_order, qty = EXCLUDED.qty",
             wid,
             fid,
             pid,
             int(item.get("sortOrder") or 0),
+            qty,
+        )
+
+
+async def _insert_product_openings(conn, wid, items, prod_map):
+    for item in items:
+        pid = prod_map.get(_id(item, "productId"))
+        ym = str(item.get("yearMonth") or "")
+        if not pid or not valid_ym(ym):
+            continue
+        await conn.execute(
+            "INSERT INTO product_openings (workspace_id, product_id, year_month, qty) VALUES ($1,$2,$3,$4) "
+            "ON CONFLICT (workspace_id, product_id, year_month) DO UPDATE SET qty = EXCLUDED.qty",
+            wid,
+            pid,
+            ym,
+            int(item.get("qty") or 0),
+        )
+
+
+async def _insert_finished_production(conn, wid, user, items, fin_map):
+    for item in items:
+        fid = fin_map.get(_id(item, "finishedGoodId"))
+        work_date = str(item.get("workDate") or "")
+        qty = int(item.get("qty") or 0)
+        if not fid or not DATE_RE.match(work_date) or qty <= 0:
+            continue
+        await conn.execute(
+            "INSERT INTO finished_production (workspace_id, client_uid, finished_good_id, work_date, qty, updated_at, updated_by) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7) "
+            "ON CONFLICT (workspace_id, finished_good_id, work_date) DO UPDATE SET qty = EXCLUDED.qty, updated_at = EXCLUDED.updated_at",
+            wid,
+            f"import-{uuid.uuid4()}",
+            fid,
+            date.fromisoformat(work_date),
+            qty,
+            now_ms(),
+            user["id"],
         )
 
 

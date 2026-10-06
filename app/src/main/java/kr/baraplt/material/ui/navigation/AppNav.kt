@@ -18,6 +18,7 @@ object Routes {
     const val PRODUCT_DETAIL = "product_detail/{id}"
     const val FINISHED = "finished"
     const val FINISHED_EDIT = "finished_edit"
+    const val FINISHED_OUTPUT = "finished_output"
     const val HISTORY = "history"
     const val STOCKTAKE = "stocktake"
     const val SETTINGS = "settings"

@@ -24,7 +24,7 @@
 
 ### 1.3 규모
 - 공장(워크스페이스) 여러 개. 예: `경주1공장`, `경주2공장`, `성남공장`
-- 공장당 자재 번호 1~500, 단품 1~500(BOM 최대 30), 완제품 1~26(구성 최대 15)
+- 공장당 자재 번호 1~500, 단품 1~500(BOM 최대 30), 완제품 1~500(구성 최대 30)
 - 공장당 동시 사용자 약 3명 (관리책임자 1 + 담당)
 - 공장 간 데이터는 **완전히 분리**. 다른 공장 ID로는 조회·수정 불가.
 
@@ -158,6 +158,7 @@
 | unitPrice | number | 단위당 단가(원) |
 | safetyStock | number | 안전재고. 0이면 경보 없음 |
 | leadTimeDays | int | 발주 리드타임(일) |
+| barcode | string | 선택. 번호와 별도. 예: `VN05L` |
 | note | string | |
 | isActive | bool | |
 | updatedAt | long | |
@@ -198,6 +199,7 @@
 | workspaceId | long | |
 | codeNo | int | 1~500 unique (workspaceId + codeNo) |
 | name | string | FRT, CTR, STEP1 … |
+| barcode | string | 선택. 번호와 별도. 예: `VN05L` |
 | sellPrice | number | 단품판매단가 |
 | isActive | bool | |
 | updatedAt | long | |
@@ -241,7 +243,7 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 |---|---|---|
 | id | long | |
 | workspaceId | long | |
-| codeNo | int | 1~26 unique (workspaceId + codeNo) |
+| codeNo | int | 1~500 unique (workspaceId + codeNo) |
 | name | string | A1SPK 등 |
 | sellPrice | number | |
 | isActive | bool | |
@@ -251,7 +253,7 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 |---|---|---|
 | workspaceId | long | |
 | finishedGoodId | long | |
-| productId | long | unique pair, 최대 15 |
+| productId | long | unique pair, 최대 30 |
 | sortOrder | int | |
 
 수량 1 고정(현재 앱). 나중에 필요하면 `qty` 추가.
@@ -404,7 +406,7 @@ Base path 예: `https://material.jayoo.kr/api/v1` (도메인 확정 전 가칭)
 | GET/POST/PUT | `/products` | 단품 |
 | PUT | `/products/{id}/bom` | BOM 전체 교체. 배열 최대 30 |
 | GET/POST/PUT | `/finished-goods` | 완제품 |
-| PUT | `/finished-goods/{id}/composition` | 단품 id 배열 최대 15 |
+| PUT | `/finished-goods/{id}/composition` | 단품 id 배열 최대 30 |
 
 같은 공장 안 `codeNo` 중복 → `409 DUPLICATE_CODE`. 다른 공장은 같은 번호 허용.
 
@@ -604,3 +606,16 @@ Base path 예: `https://material.jayoo.kr/api/v1` (도메인 확정 전 가칭)
 - 패키지 `kr.baraplt.material`
 
 서버 1차: **공장을 만들고**, JSON을 그 공장에 넣은 뒤, 같은 공장 토큰으로 snapshot을 돌려주면 앱 연동이 된다.
+
+---
+
+## 12. 자재·단품 사진
+
+재고 JSON과 따로 둔다. 항목당 JPEG 한 장, 약 300KB 이하.
+
+- `GET /photos` — `{ items: [{ kind, codeNo, updatedAt }] }`. kind는 `material` 또는 `product`.
+- `GET /photos/{kind}/{codeNo}` — `image/jpeg`. 헤더 `X-Updated-At`.
+- `PUT /photos/{kind}/{codeNo}` — 관리책임자. 본문은 JPEG. 헤더 `X-Updated-At`. 서버 시각이 더 새면 건너뛴다.
+- `DELETE /photos/{kind}/{codeNo}?updatedAt=` — 관리책임자. 서버 시각이 더 새면 건너뛴다.
+
+자재·단품을 지우면 그 번호의 사진도 지운다. 번호가 바뀌면 앱이 이전 번호를 지우고 새 번호로 다시 올린다.

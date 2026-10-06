@@ -19,4 +19,4 @@ Close and backup
 • Manager approval for stocktake differences
 • All data stays on the device. Export a JSON backup anytime
 
-No ads. No sign-in. No location or contacts permission.
+A banner ad may appear at the bottom of the screen. No sign-in. No location or contacts permission.

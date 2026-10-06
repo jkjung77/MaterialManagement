@@ -59,6 +59,60 @@ class StockCalculatorTest {
     }
 
     @Test
+    fun finishedOutputConsumesProductsByComponentQty() {
+        val used = StockCalculator.productsUsedByFinished(
+            finishedQty = mapOf(100L to 10, 200L to 5, 300L to 0),
+            composition = mapOf(
+                100L to listOf(1L to 2, 2L to 1),
+                200L to listOf(1L to 1),
+                300L to listOf(3L to 1)
+            )
+        )
+        assertEquals(mapOf(1L to 25, 2L to 10), used)
+    }
+
+    @Test
+    fun productCurrentStockSubtractsFinishedUse() {
+        val p = ProductSnapshot(
+            id = 1, codeNo = 1, name = "A", sellPrice = 0.0, bom = emptyList(),
+            monthPlan = 0, produced = 40, safetyStock = 30, opening = 20, consumed = 25
+        )
+        assertEquals(35, p.current)
+        assertEquals(false, p.stockLow)
+        assertEquals(true, p.copy(consumed = 31).stockLow)
+    }
+
+    @Test
+    fun shortfallOnlyBelowSafetyStock() {
+        assertEquals(0, StockCalculator.productShortfall(current = 50, safetyStock = 0))
+        assertEquals(0, StockCalculator.productShortfall(current = 50, safetyStock = 40))
+        assertEquals(15, StockCalculator.productShortfall(current = 25, safetyStock = 40))
+        assertEquals(50, StockCalculator.productShortfall(current = -10, safetyStock = 40))
+    }
+
+    @Test
+    fun productMonthPlanFillsNeedWhenHigherThanFinished() {
+        val need = StockCalculator.requiredFromPlans(
+            finishedPlans = mapOf(100L to 10),
+            finishedBom = mapOf(100L to listOf(1L to 1)),
+            productBoms = mapOf(1L to listOf(7L to 2.0)),
+            productPlans = mapOf(1L to 20)
+        )
+        assertEquals(40.0, need.getValue(7L), 0.0001)
+    }
+
+    @Test
+    fun requiredMaterialsIncludePlanAndProductShortfall() {
+        val need = StockCalculator.requiredFromPlans(
+            finishedPlans = mapOf(100L to 10),
+            finishedBom = mapOf(100L to listOf(1L to 2)),
+            productBoms = mapOf(1L to listOf(7L to 0.5), 2L to listOf(7L to 1.0)),
+            productShortfalls = mapOf(2L to 4)
+        )
+        assertEquals(14.0, need.getValue(7L), 0.0001)
+    }
+
+    @Test
     fun a1spkCostAndRatio() {
         val cost = 19415.0 + 26369.0 + 23175.0 + 990.0
         assertEquals(69949.0, cost, 0.01)

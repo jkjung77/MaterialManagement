@@ -2,6 +2,7 @@ package kr.baraplt.material.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -9,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kr.baraplt.material.domain.ScreenLabels
 import kr.baraplt.material.domain.UserRole
 import kr.baraplt.material.domain.WorkspaceId
 import kr.baraplt.material.domain.WorkspaceSecret
@@ -29,7 +31,19 @@ class SettingsStore(private val context: Context) {
     private val refreshTokenKey = stringPreferencesKey("refresh_token")
     private val pendingQueueKey = stringPreferencesKey("sync_queue")
     private val lastSyncKey = longPreferencesKey("last_sync_at")
+    private val mastersDirtyKey = longPreferencesKey("masters_dirty_at")
     private val serverLinkedKey = booleanPreferencesKey("server_linked")
+    private val gradeGoodKey = intPreferencesKey("grade_good_percent")
+    private val gradeNormalKey = intPreferencesKey("grade_normal_percent")
+    private val screenLabelsKey = stringPreferencesKey("screen_labels")
+
+    val screenLabels: Flow<ScreenLabels> = context.dataStore.data.map {
+        ScreenLabels.decode(it[screenLabelsKey], it[workspaceIdKey].orEmpty())
+    }
+
+    suspend fun setScreenLabels(workspaceId: String, labels: ScreenLabels) {
+        context.dataStore.edit { it[screenLabelsKey] = labels.cleaned().encode(workspaceId) }
+    }
 
     val role: Flow<UserRole> = context.dataStore.data.map {
         runCatching { UserRole.valueOf(it[roleKey] ?: UserRole.STAFF.name) }
@@ -58,6 +72,21 @@ class SettingsStore(private val context: Context) {
     val pendingQueue: Flow<String> = context.dataStore.data.map { it[pendingQueueKey] ?: "[]" }
     val lastSyncAt: Flow<Long> = context.dataStore.data.map { it[lastSyncKey] ?: 0L }
     val serverLinked: Flow<Boolean> = context.dataStore.data.map { it[serverLinkedKey] ?: false }
+
+    val gradeBounds: Flow<Pair<Int, Int>> = context.dataStore.data.map {
+        val good = it[gradeGoodKey] ?: 55
+        val normal = it[gradeNormalKey] ?: 70
+        good.coerceIn(1, 98) to normal.coerceIn(good + 1, 99)
+    }
+
+    suspend fun setGradeBounds(goodPercent: Int, normalPercent: Int) {
+        val good = goodPercent.coerceIn(1, 98)
+        val normal = normalPercent.coerceIn(good + 1, 99)
+        context.dataStore.edit {
+            it[gradeGoodKey] = good
+            it[gradeNormalKey] = normal
+        }
+    }
 
     suspend fun setRole(role: UserRole) {
         context.dataStore.edit { it[roleKey] = role.name }
@@ -113,6 +142,17 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setLastSync(at: Long) {
         context.dataStore.edit { it[lastSyncKey] = at }
+    }
+
+    suspend fun mastersDirtyAt(): Long =
+        context.dataStore.data.map { it[mastersDirtyKey] ?: 0L }.first()
+
+    suspend fun markMastersDirty() {
+        context.dataStore.edit { it[mastersDirtyKey] = System.currentTimeMillis() }
+    }
+
+    suspend fun clearMastersDirty(stamp: Long) {
+        context.dataStore.edit { if ((it[mastersDirtyKey] ?: 0L) == stamp) it.remove(mastersDirtyKey) }
     }
 
     suspend fun pendingItems(): org.json.JSONArray {

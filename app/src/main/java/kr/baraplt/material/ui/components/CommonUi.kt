@@ -1,6 +1,10 @@
 package kr.baraplt.material.ui.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -8,16 +12,20 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -175,26 +183,24 @@ fun AppSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     placeholder: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onScan: (() -> Unit)? = null
 ) {
-    SearchBar(
-        inputField = {
-            SearchBarDefaults.InputField(
-                query = query,
-                onQueryChange = onQueryChange,
-                onSearch = {},
-                expanded = false,
-                onExpandedChange = {},
-                placeholder = { Text(placeholder) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
-            )
-        },
-        expanded = false,
-        onExpandedChange = {},
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
         modifier = modifier.fillMaxWidth(),
-        colors = SearchBarDefaults.colors(),
-        windowInsets = WindowInsets(0)
-    ) {}
+        singleLine = true,
+        placeholder = { Text(placeholder) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = onScan?.let { scan ->
+            {
+                IconButton(onClick = scan) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = "바코드 스캔")
+                }
+            }
+        }
+    )
 }
 
 @Composable
@@ -363,5 +369,64 @@ fun LockedBanner(visible: Boolean) {
                 style = MaterialTheme.typography.bodyMedium
             )
         }
+    }
+}
+
+@Composable
+fun DayGrid(
+    year: Int,
+    month: Int,
+    days: Int,
+    qtyByDay: Map<Int, Int>,
+    selected: Int?,
+    onSelect: (Int) -> Unit
+) {
+    val weekLabels = listOf("일", "월", "화", "수", "목", "금", "토")
+    Row(Modifier.fillMaxWidth()) {
+        weekLabels.forEach {
+            Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    val offset = java.time.LocalDate.of(year, month, 1).dayOfWeek.value % 7
+    val cells = List(offset) { 0 } + (1..days).toList()
+    cells.chunked(7).forEach { week ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            week.forEach { day ->
+                if (day == 0) {
+                    Spacer(Modifier.weight(1f).aspectRatio(1f))
+                } else {
+                    val qty = qtyByDay[day] ?: 0
+                    val scheme = MaterialTheme.colorScheme
+                    val bg = when {
+                        selected == day -> scheme.primary
+                        qty > 0 -> scheme.primaryContainer
+                        else -> scheme.surface
+                    }
+                    val fg = when {
+                        selected == day -> scheme.onPrimary
+                        qty > 0 -> scheme.onPrimaryContainer
+                        else -> scheme.onSurface
+                    }
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(bg)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(10.dp))
+                            .clickable { onSelect(day) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("$day", color = fg, style = MaterialTheme.typography.labelMedium)
+                            if (qty > 0) Text("$qty", color = fg, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+            repeat(7 - week.size) { Spacer(Modifier.weight(1f).aspectRatio(1f)) }
+        }
+        Spacer(Modifier.height(4.dp))
     }
 }

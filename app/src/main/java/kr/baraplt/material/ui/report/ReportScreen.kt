@@ -10,14 +10,21 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kr.baraplt.material.domain.ItemMatch
 import kr.baraplt.material.domain.formatMoney
+import kr.baraplt.material.domain.ratioGrade
 import kr.baraplt.material.domain.formatPct
 import kr.baraplt.material.domain.formatQty
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.components.AppCard
 import kr.baraplt.material.ui.components.AppScreenScaffold
+import kr.baraplt.material.ui.components.AppSearchField
 import kr.baraplt.material.ui.components.KeyValue
 import kr.baraplt.material.ui.components.KpiTile
 import kr.baraplt.material.ui.components.MonthSwitcher
@@ -33,6 +40,8 @@ fun ReportScreen(
 ) {
     val ws = state.workspace
     val report = ws?.report
+    var productQuery by remember { mutableStateOf("") }
+    var materialQuery by remember { mutableStateOf("") }
     AppScreenScaffold(title = "매출 대비 자재실적") { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
@@ -51,39 +60,55 @@ fun ReportScreen(
                 item {
                     AppCard {
                         Text("종합", style = MaterialTheme.typography.titleLarge)
-                        KeyValue("판매금액", "${formatMoney(report.salesAmount)}원")
+                        KeyValue("판매금액(단품)", "${formatMoney(report.salesAmount)}원")
+                        KeyValue("완성품 실적", "${formatMoney(report.finishedSalesAmount)}원 · ${report.finishedProducedQty}")
+                        KeyValue("자재 합계금액", "${formatMoney(report.stockAmount)}원")
                         KeyValue("자재 사용금액", "${formatMoney(report.usageAmount)}원")
                         KeyValue("자재 구입금액", "${formatMoney(report.purchaseAmount)}원")
                         KeyValue("폐기(실패비용)", "${formatMoney(report.scrapCost)}원")
                         KeyValue("자재 투입비율", formatPct(report.materialRatio))
-                        KeyValue("판정", report.grade)
+                        KeyValue("판정", ratioGrade(report.salesAmount, report.materialRatio, state.gradeGood, state.gradeNormal))
                         KeyValue("단품 생산합계", report.producedQty.toString())
                     }
                 }
                 item { SectionTitle("단품별") }
-                items(ws.products, key = { it.id }) { p ->
+                item { AppSearchField(productQuery, { productQuery = it }, "단품명 / 번호 / 바코드") }
+                val products = ws.products.filter { ItemMatch.matches(it.codeNo, it.name, productQuery, it.barcode) }
+                if (products.isEmpty()) {
+                    item { Text("찾는 단품이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+                }
+                items(products, key = { it.id }) { p ->
                     AppCard {
                         Text("NO.${p.codeNo}  ${p.name}", style = MaterialTheme.typography.titleMedium)
                         KeyValue("실적 / 계획", "${p.produced} / ${p.monthPlan}")
+                        KeyValue("현재고", "${p.current} (시작 ${p.opening} · 완성품투입 ${p.consumed})")
+                        if (p.finishedRefLabel.isNotBlank()) KeyValue("완제품 참고", "${p.finishedRefQty} (${p.finishedRefNote})")
                         KeyValue("판매금액", "${formatMoney(p.salesAmount)}원")
                         KeyValue("투입자재비용", "${formatMoney(p.usageAmount)}원")
                         KeyValue("자재비율", formatPct(p.materialRatio))
                     }
                 }
                 item { SectionTitle("자재별") }
-                items(ws.materials.filter { it.usage > 0 || it.inbound > 0 || it.scrap > 0 }, key = { it.id }) { m ->
+                item { AppSearchField(materialQuery, { materialQuery = it }, "자재명 / 번호 / 바코드") }
+                val materials = ws.materials.filter { it.usage > 0 || it.inbound > 0 || it.scrap > 0 }
+                    .filter { ItemMatch.matches(it.codeNo, it.name, materialQuery, it.barcode) }
+                if (materials.isEmpty()) {
+                    item { Text("찾는 자재가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+                }
+                items(materials, key = { it.id }) { m ->
                     AppCard {
                         Text("NO.${m.codeNo}  ${m.name}", style = MaterialTheme.typography.titleMedium)
                         KeyValue("사용량", "${formatQty(m.usage)} ${m.unit}")
                         KeyValue("입고", "${formatQty(m.inbound)} ${m.unit}")
                         KeyValue("현재고", "${formatQty(m.current)} ${m.unit}")
+                        KeyValue("계획 필요수량", "${formatQty(m.planNeed)} ${m.unit}")
                         KeyValue("사용금액", "${formatMoney(m.usageAmount)}원")
                         KeyValue("입고금액", "${formatMoney(m.purchaseAmount)}원")
                     }
                 }
                 item {
                     TwoCol {
-                        KpiTile("투입비율", formatPct(report.materialRatio), report.grade, Modifier.weight(1f))
+                        KpiTile("투입비율", formatPct(report.materialRatio), ratioGrade(report.salesAmount, report.materialRatio, state.gradeGood, state.gradeNormal), Modifier.weight(1f))
                         KpiTile("폐기비용", formatMoney(report.scrapCost), "원", Modifier.weight(1f))
                     }
                 }

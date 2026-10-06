@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.Flow
 import kr.baraplt.material.data.entity.DailyProductionEntity
 import kr.baraplt.material.data.entity.FinishedCompositionEntity
 import kr.baraplt.material.data.entity.FinishedGoodEntity
+import kr.baraplt.material.data.entity.FinishedProductionEntity
+import kr.baraplt.material.data.entity.ProductOpeningEntity
 import kr.baraplt.material.data.entity.MaterialEntity
 import kr.baraplt.material.data.entity.MonthCloseEntity
 import kr.baraplt.material.data.entity.MonthlyPlanEntity
@@ -269,6 +271,51 @@ interface MonthlyPlanDao {
 
     @Query("DELETE FROM monthly_plans WHERE finishedGoodId = :finishedId")
     suspend fun deleteForFinished(finishedId: Long)
+}
+
+@Dao
+interface ProductOpeningDao {
+    @Query("SELECT * FROM product_openings WHERE yearMonth = :yearMonth")
+    fun observeMonth(yearMonth: String): Flow<List<ProductOpeningEntity>>
+
+    @Query("SELECT * FROM product_openings WHERE yearMonth = :yearMonth")
+    suspend fun forMonth(yearMonth: String): List<ProductOpeningEntity>
+
+    @Query("SELECT * FROM product_openings")
+    suspend fun getAll(): List<ProductOpeningEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(item: ProductOpeningEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<ProductOpeningEntity>)
+
+    @Query("DELETE FROM product_openings WHERE productId = :productId")
+    suspend fun deleteForProduct(productId: Long)
+}
+
+@Dao
+interface FinishedProductionDao {
+    @Query("SELECT * FROM finished_production WHERE workDate LIKE :prefix || '%' ORDER BY workDate")
+    fun observeMonth(prefix: String): Flow<List<FinishedProductionEntity>>
+
+    @Query("SELECT * FROM finished_production WHERE workDate LIKE :prefix || '%'")
+    suspend fun forMonth(prefix: String): List<FinishedProductionEntity>
+
+    @Query("SELECT * FROM finished_production")
+    suspend fun getAll(): List<FinishedProductionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(item: FinishedProductionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<FinishedProductionEntity>)
+
+    @Query("DELETE FROM finished_production WHERE finishedGoodId = :finishedId AND workDate = :workDate")
+    suspend fun delete(finishedId: Long, workDate: String)
+
+    @Query("SELECT COUNT(*) FROM finished_production WHERE finishedGoodId = :finishedId")
+    suspend fun countForFinished(finishedId: Long): Int
 }
 
 @Dao

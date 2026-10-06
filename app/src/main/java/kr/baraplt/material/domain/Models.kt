@@ -64,6 +64,7 @@ data class MaterialSnapshot(
     val unitPrice: Double,
     val safetyStock: Double,
     val leadTimeDays: Int,
+    val barcode: String = "",
     val opening: Double,
     val inbound: Double,
     val outbound: Double,
@@ -71,7 +72,8 @@ data class MaterialSnapshot(
     val adjust: Double,
     val usage: Double,
     val purchaseAmount: Double,
-    val scrapCost: Double
+    val scrapCost: Double,
+    val planNeed: Double = 0.0
 ) {
     val current: Double
         get() = opening + inbound - outbound - scrap + adjust - usage
@@ -101,15 +103,28 @@ data class ProductSnapshot(
     val id: Long,
     val codeNo: Int,
     val name: String,
+    val barcode: String = "",
     val sellPrice: Double,
     val bom: List<BomLine>,
     val monthPlan: Int,
-    val produced: Int
+    val produced: Int,
+    val finishedRefQty: Int = 0,
+    val finishedRefNote: String = "",
+    val safetyStock: Int = 0,
+    val opening: Int = 0,
+    val consumed: Int = 0
 ) {
+    val current: Int get() = opening + produced - consumed
+    val stockLow: Boolean get() = safetyStock > 0 && current <= safetyStock
     val materialCost: Double get() = bom.sumOf { it.lineCost }
     val materialRatio: Double get() = if (sellPrice <= 0) 0.0 else materialCost / sellPrice
     val usageAmount: Double get() = materialCost * produced
     val salesAmount: Double get() = sellPrice * produced
+    val finishedRefLabel: String
+        get() = if (finishedRefQty <= 0) "" else {
+            val note = if (finishedRefNote.isBlank()) "" else " ($finishedRefNote)"
+            "참고 $finishedRefQty$note"
+        }
 }
 
 data class FinishedSnapshot(
@@ -120,9 +135,13 @@ data class FinishedSnapshot(
     val productIds: List<Long>,
     val productNames: List<String>,
     val monthPlan: Int,
-    val materialCost: Double
+    val materialCost: Double,
+    val productQtys: List<Int> = emptyList(),
+    val produced: Int = 0
 ) {
     val materialRatio: Double get() = if (sellPrice <= 0) 0.0 else materialCost / sellPrice
+    val salesAmount: Double get() = sellPrice * produced
+    fun qtyAt(index: Int): Int = productQtys.getOrNull(index)?.coerceAtLeast(1) ?: 1
 }
 
 data class MonthReport(
@@ -132,7 +151,10 @@ data class MonthReport(
     val purchaseAmount: Double,
     val scrapCost: Double,
     val producedQty: Int,
-    val inboundQty: Double
+    val inboundQty: Double,
+    val stockAmount: Double = 0.0,
+    val finishedSalesAmount: Double = 0.0,
+    val finishedProducedQty: Int = 0
 ) {
     val materialRatio: Double get() = if (salesAmount <= 0) 0.0 else usageAmount / salesAmount
     val grade: String

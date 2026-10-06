@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
@@ -24,9 +27,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -37,8 +43,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kr.baraplt.material.ui.AppViewModel
+import kr.baraplt.material.ui.components.BannerAd
 import kr.baraplt.material.ui.finished.FinishedEditScreen
 import kr.baraplt.material.ui.finished.FinishedListScreen
+import kr.baraplt.material.ui.finished.FinishedOutputScreen
 import kr.baraplt.material.ui.history.HistoryScreen
 import kr.baraplt.material.ui.home.HomeScreen
 import kr.baraplt.material.ui.material.MaterialDetailScreen
@@ -96,8 +104,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val labels by vm.screenLabels.collectAsStateWithLifecycle()
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
+    var productionPick by remember { mutableStateOf<Long?>(null) }
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val showBottom = bottomDestinations.any { it.route == route }
@@ -117,8 +127,9 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
+            Column(Modifier.navigationBarsPadding()) {
             if (showBottom) {
-                NavigationBar {
+                NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0)) {
                     bottomDestinations.forEach { dest ->
                         NavigationBarItem(
                             selected = route == dest.route,
@@ -141,10 +152,32 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                                     contentDescription = dest.label
                                 )
                             },
-                            label = { Text(dest.label) }
+                            label = {
+                                val sub = when (dest) {
+                                    Dest.Materials -> labels.materials
+                                    Dest.Production -> labels.production
+                                    Dest.Report -> labels.report
+                                    else -> ""
+                                }
+                                if (sub.isBlank()) {
+                                    Text(dest.label)
+                                } else {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(dest.label)
+                                        Text(
+                                            sub,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
                         )
                     }
                 }
+            }
+            if (state.ready) BannerAd()
             }
         }
     ) { padding ->
@@ -162,13 +195,16 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
             composable(Dest.Home.route) {
                 HomeScreen(
                     state = state,
+                    titleSub = labels.title,
                     onPrevMonth = { vm.shiftMonth(-1) },
                     onNextMonth = { vm.shiftMonth(1) },
                     onInbound = { nav.navigate(Routes.movement("INBOUND")) },
                     onProduction = { nav.navigate(Dest.Production.route) },
+                    onFinishedOutput = { nav.navigate(Routes.FINISHED_OUTPUT) },
                     onScrap = { nav.navigate(Routes.movement("SCRAP")) },
                     onStocktake = { nav.navigate(Routes.STOCKTAKE) },
                     onMaterial = { nav.navigate(Routes.materialDetail(it)) },
+                    onProduct = { nav.navigate(Routes.productDetail(it)) },
                     onSync = { vm.syncNow() }
                 )
             }
@@ -177,16 +213,18 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     state = state,
                     onOpen = { nav.navigate(Routes.materialDetail(it)) },
                     onAdd = { nav.navigate("${Routes.MATERIAL_EDIT}?id=") },
-                    canAdd = state.role.name == "MANAGER"
+                    canAdd = state.role.name == "MANAGER",
+                    onMessage = vm::show
                 )
             }
             composable(Dest.Production.route) {
                 ProductionScreen(
                     state = state,
                     vm = vm,
-                    presetProductId = null,
+                    presetProductId = productionPick,
                     onPrevMonth = { vm.shiftMonth(-1) },
-                    onNextMonth = { vm.shiftMonth(1) }
+                    onNextMonth = { vm.shiftMonth(1) },
+                    onPresetUsed = { productionPick = null }
                 )
             }
             composable(Dest.Report.route) {
@@ -242,7 +280,8 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     state = state,
                     onOpen = { nav.navigate(Routes.productDetail(it)) },
                     onAdd = { nav.navigate("${Routes.PRODUCT_EDIT}?id=") },
-                    onBack = { nav.popBackStack() }
+                    onBack = { nav.popBackStack() },
+                    onMessage = vm::show
                 )
             }
             composable(
@@ -256,14 +295,30 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     productId = id,
                     onBack = { nav.popBackStack() },
                     onEdit = { nav.navigate("${Routes.PRODUCT_EDIT}?id=$id") },
-                    onProduction = { nav.navigate(Dest.Production.route) }
+                    onCopy = { nav.navigate("${Routes.PRODUCT_EDIT}?id=&copy=$id") },
+                    onProduction = {
+                        productionPick = id
+                        nav.navigate(Dest.Production.route) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
             }
             composable(
-                "${Routes.PRODUCT_EDIT}?id={id}",
-                arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null })
+                "${Routes.PRODUCT_EDIT}?id={id}&copy={copy}",
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("copy") { type = NavType.StringType; nullable = true; defaultValue = null }
+                )
             ) { entry ->
-                ProductEditScreen(state, vm, entry.arguments?.getString("id")?.toLongOrNull()) { nav.popBackStack() }
+                ProductEditScreen(
+                    state,
+                    vm,
+                    entry.arguments?.getString("id")?.toLongOrNull(),
+                    copyFromId = entry.arguments?.getString("copy")?.toLongOrNull()
+                ) { nav.popBackStack() }
             }
             composable(Routes.FINISHED) {
                 FinishedListScreen(
@@ -271,7 +326,8 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                     vm = vm,
                     onBack = { nav.popBackStack() },
                     onAdd = { nav.navigate("${Routes.FINISHED_EDIT}?id=") },
-                    onEdit = { nav.navigate("${Routes.FINISHED_EDIT}?id=$it") }
+                    onEdit = { nav.navigate("${Routes.FINISHED_EDIT}?id=$it") },
+                    onOutput = { nav.navigate(Routes.FINISHED_OUTPUT) }
                 )
             }
             composable(
@@ -279,6 +335,15 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null })
             ) { entry ->
                 FinishedEditScreen(state, vm, entry.arguments?.getString("id")?.toLongOrNull()) { nav.popBackStack() }
+            }
+            composable(Routes.FINISHED_OUTPUT) {
+                FinishedOutputScreen(
+                    state = state,
+                    vm = vm,
+                    onBack = { nav.popBackStack() },
+                    onPrevMonth = { vm.shiftMonth(-1) },
+                    onNextMonth = { vm.shiftMonth(1) }
+                )
             }
             composable(Routes.HISTORY) { HistoryScreen(state, vm) { nav.popBackStack() } }
             composable(Routes.STOCKTAKE) { StocktakeScreen(state, vm) { nav.popBackStack() } }

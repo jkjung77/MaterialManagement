@@ -2,6 +2,7 @@ package kr.baraplt.material
 
 import android.content.Context
 import kr.baraplt.material.data.AppDatabase
+import kr.baraplt.material.data.ItemPhotoStore
 import kr.baraplt.material.data.SettingsStore
 import kr.baraplt.material.data.repo.AppRepository
 import kr.baraplt.material.data.sync.MaterialApi
@@ -20,11 +21,18 @@ class AppContainer(private val context: Context) {
     @Volatile
     private var repositoryField: AppRepository? = null
 
+    @Volatile
+    private var photoStore: ItemPhotoStore? = null
+
     val repository: AppRepository
         get() = repositoryField ?: error("공장 ID가 아직 연결되지 않았습니다")
 
+    fun photos(): ItemPhotoStore =
+        photoStore ?: error("공장 ID가 아직 연결되지 않았습니다")
+
     fun bind(workspaceId: String) {
         synchronized(this) {
+            photoStore = ItemPhotoStore.forWorkspace(context, workspaceId)
             if (boundId == workspaceId && repositoryField != null) return
             db?.close()
             val opened = AppDatabase.create(context.applicationContext, workspaceId)
@@ -34,5 +42,5 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    fun sync(): SyncCoordinator = SyncCoordinator(settings, api, repository)
+    fun sync(): SyncCoordinator = SyncCoordinator(settings, api, repository, photoStore)
 }

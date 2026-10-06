@@ -3,6 +3,8 @@ package kr.baraplt.material.data
 import kr.baraplt.material.data.entity.DailyProductionEntity
 import kr.baraplt.material.data.entity.FinishedCompositionEntity
 import kr.baraplt.material.data.entity.FinishedGoodEntity
+import kr.baraplt.material.data.entity.FinishedProductionEntity
+import kr.baraplt.material.data.entity.ProductOpeningEntity
 import kr.baraplt.material.data.entity.MaterialEntity
 import kr.baraplt.material.data.entity.MonthCloseEntity
 import kr.baraplt.material.data.entity.MonthlyPlanEntity
@@ -27,7 +29,7 @@ object BackupIo {
                         .put("unit", m.unit).put("packUnit", m.packUnit)
                         .put("unitPrice", m.unitPrice).put("safetyStock", m.safetyStock)
                         .put("leadTimeDays", m.leadTimeDays).put("note", m.note)
-                        .put("isActive", m.isActive).put("updatedAt", m.updatedAt)
+                        .put("isActive", m.isActive).put("updatedAt", m.updatedAt).put("barcode", m.barcode)
                 )
             }
         })
@@ -47,7 +49,7 @@ object BackupIo {
         })
         root.put("products", JSONArray().also { arr ->
             bundle.products.forEach {
-                arr.put(JSONObject().put("id", it.id).put("codeNo", it.codeNo).put("name", it.name).put("sellPrice", it.sellPrice).put("isActive", it.isActive).put("updatedAt", it.updatedAt))
+                arr.put(JSONObject().put("id", it.id).put("codeNo", it.codeNo).put("name", it.name).put("sellPrice", it.sellPrice).put("isActive", it.isActive).put("updatedAt", it.updatedAt).put("barcode", it.barcode).put("safetyStock", it.safetyStock))
             }
         })
         root.put("bom", JSONArray().also { arr ->
@@ -72,7 +74,7 @@ object BackupIo {
         })
         root.put("composition", JSONArray().also { arr ->
             bundle.composition.forEach {
-                arr.put(JSONObject().put("id", it.id).put("finishedGoodId", it.finishedGoodId).put("productId", it.productId).put("sortOrder", it.sortOrder))
+                arr.put(JSONObject().put("id", it.id).put("finishedGoodId", it.finishedGoodId).put("productId", it.productId).put("sortOrder", it.sortOrder).put("qty", it.qty))
             }
         })
         root.put("monthlyPlans", JSONArray().also { arr ->
@@ -83,6 +85,16 @@ object BackupIo {
         root.put("closes", JSONArray().also { arr ->
             bundle.closes.forEach {
                 arr.put(JSONObject().put("yearMonth", it.yearMonth).put("closedAt", it.closedAt).put("closedBy", it.closedBy))
+            }
+        })
+        root.put("productOpenings", JSONArray().also { arr ->
+            bundle.productOpenings.forEach {
+                arr.put(JSONObject().put("id", it.id).put("productId", it.productId).put("yearMonth", it.yearMonth).put("qty", it.qty))
+            }
+        })
+        root.put("finishedProduction", JSONArray().also { arr ->
+            bundle.finishedProduction.forEach {
+                arr.put(JSONObject().put("id", it.id).put("finishedGoodId", it.finishedGoodId).put("workDate", it.workDate).put("qty", it.qty))
             }
         })
         return root.toString(2)
@@ -97,7 +109,8 @@ object BackupIo {
                     unit = o.optString("unit"), packUnit = o.optString("packUnit"),
                     unitPrice = o.optDouble("unitPrice"), safetyStock = o.optDouble("safetyStock"),
                     leadTimeDays = o.optInt("leadTimeDays"), note = o.optString("note"),
-                    isActive = o.optBoolean("isActive", true), updatedAt = o.optLong("updatedAt")
+                    isActive = o.optBoolean("isActive", true), updatedAt = o.optLong("updatedAt"),
+                    barcode = o.optString("barcode")
                 )
             },
             openings = root.optJSONArray("openings").orEmpty().map {
@@ -111,7 +124,7 @@ object BackupIo {
                 )
             },
             products = root.optJSONArray("products").orEmpty().map {
-                ProductEntity(it.optLong("id"), it.optInt("codeNo"), it.optString("name"), it.optDouble("sellPrice"), it.optBoolean("isActive", true), it.optLong("updatedAt"))
+                ProductEntity(it.optLong("id"), it.optInt("codeNo"), it.optString("name"), it.optDouble("sellPrice"), it.optBoolean("isActive", true), it.optLong("updatedAt"), it.optString("barcode"), it.optInt("safetyStock"))
             },
             bom = root.optJSONArray("bom").orEmpty().map {
                 ProductBomEntity(it.optLong("id"), it.optLong("productId"), it.optLong("materialId"), it.optDouble("usQty"), it.optInt("sortOrder"))
@@ -126,13 +139,19 @@ object BackupIo {
                 FinishedGoodEntity(it.optLong("id"), it.optInt("codeNo"), it.optString("name"), it.optDouble("sellPrice"), it.optBoolean("isActive", true), it.optLong("updatedAt"))
             },
             composition = root.optJSONArray("composition").orEmpty().map {
-                FinishedCompositionEntity(it.optLong("id"), it.optLong("finishedGoodId"), it.optLong("productId"), it.optInt("sortOrder"))
+                FinishedCompositionEntity(it.optLong("id"), it.optLong("finishedGoodId"), it.optLong("productId"), it.optInt("sortOrder"), it.optInt("qty", 1).coerceAtLeast(1))
             },
             monthlyPlans = root.optJSONArray("monthlyPlans").orEmpty().map {
                 MonthlyPlanEntity(it.optLong("id"), it.optLong("finishedGoodId"), it.optString("yearMonth"), it.optInt("qty"))
             },
             closes = root.optJSONArray("closes").orEmpty().map {
                 MonthCloseEntity(it.optString("yearMonth"), it.optLong("closedAt"), it.optString("closedBy"))
+            },
+            productOpenings = root.optJSONArray("productOpenings").orEmpty().map {
+                ProductOpeningEntity(it.optLong("id"), it.optLong("productId"), it.optString("yearMonth"), it.optInt("qty"))
+            },
+            finishedProduction = root.optJSONArray("finishedProduction").orEmpty().map {
+                FinishedProductionEntity(it.optLong("id"), it.optLong("finishedGoodId"), it.optString("workDate"), it.optInt("qty"))
             }
         )
     }

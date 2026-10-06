@@ -16,5 +16,5 @@ Play Console → 앱 콘텐츠 → 데이터 보안
 • 파일·문서: 사용자가 백업 JSON을 직접 내보낼 때만 사용자가 고른 위치에 저장
 • 앱 활동·기기 ID: 수집 안 함
 
-타사 SDK / 광고 / Analytics: 없음
+타사 SDK: Google AdMob 배너. 광고 ID를 광고 게재에 사용. Analytics 별도 없음.
 어린이 대상: 아니요

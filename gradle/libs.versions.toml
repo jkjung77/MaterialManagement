@@ -16,6 +16,8 @@ datastorePreferences = "1.1.1"
 coroutinesTest = "1.9.0"
 appUpdate = "2.1.0"
 fragment = "1.8.5"
+playServicesAds = "23.6.0"
+playServicesCodeScanner = "16.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,6 +46,8 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 google-play-app-update = { group = "com.google.android.play", name = "app-update", version.ref = "appUpdate" }
 google-play-app-update-ktx = { group = "com.google.android.play", name = "app-update-ktx", version.ref = "appUpdate" }
 androidx-fragment = { group = "androidx.fragment", name = "fragment", version.ref = "fragment" }
+google-play-services-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "playServicesAds" }
+google-play-services-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "playServicesCodeScanner" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -34,6 +34,9 @@ class MaterialApi(private val baseUrl: String = DEFAULT_BASE) {
             body = JSONObject().put("currentPassword", current).put("password", next)
         ) { it.optJSONObject("data") ?: it }
 
+    suspend fun setScreenLabels(token: String, labels: JSONObject): ApiResult<JSONObject> =
+        request("PUT", "/workspaces/me/labels", auth = token, body = labels) { it.optJSONObject("data") ?: it }
+
     suspend fun refresh(refreshToken: String): ApiResult<LoginData> =
         request("POST", "/auth/refresh", auth = null, body = JSONObject().put("refreshToken", refreshToken)) {
             LoginData.from(it.optJSONObject("data") ?: it)
@@ -70,6 +73,25 @@ class MaterialApi(private val baseUrl: String = DEFAULT_BASE) {
 
     suspend fun reopenMonth(token: String, yearMonth: String): ApiResult<JSONObject> =
         request("DELETE", "/months/$yearMonth/close", auth = token) { it.optJSONObject("data") ?: it }
+
+    suspend fun photoIndex(token: String): ApiResult<JSONObject> =
+        request("GET", "/photos", auth = token) { it.optJSONObject("data") ?: it }
+
+    suspend fun uploadPhoto(token: String, kind: String, codeNo: Int, updatedAt: Long, bytes: ByteArray): ApiResult<JSONObject> =
+        requestBytes("PUT", "/photos/$kind/$codeNo", token, bytes, updatedAt) { text, _ ->
+            val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+            json.optJSONObject("data") ?: json
+        }
+
+    suspend fun downloadPhoto(token: String, kind: String, codeNo: Int): ApiResult<PhotoFile> =
+        requestBytes("GET", "/photos/$kind/$codeNo", token, null, null) { _, conn ->
+            val updated = conn.getHeaderField("X-Updated-At")?.toLongOrNull() ?: 0L
+            val bytes = conn.inputStream.use { it.readBytes() }
+            PhotoFile(bytes, updated)
+        }
+
+    suspend fun deletePhoto(token: String, kind: String, codeNo: Int, updatedAt: Long): ApiResult<JSONObject> =
+        request("DELETE", "/photos/$kind/$codeNo?updatedAt=$updatedAt", auth = token) { it.optJSONObject("data") ?: it }
 
     private suspend fun <T> request(
         method: String,
@@ -112,6 +134,52 @@ class MaterialApi(private val baseUrl: String = DEFAULT_BASE) {
         }
     }
 
+    private suspend fun <T> requestBytes(
+        method: String,
+        path: String,
+        auth: String,
+        body: ByteArray?,
+        updatedAt: Long?,
+        parse: (String, HttpURLConnection) -> T
+    ): ApiResult<T> = withContext(Dispatchers.IO) {
+        val conn = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            setRequestProperty("Accept", if (method == "GET") "image/jpeg" else "application/json")
+            setRequestProperty("Authorization", "Bearer $auth")
+            if (updatedAt != null) setRequestProperty("X-Updated-At", updatedAt.toString())
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "image/jpeg")
+            }
+        }
+        try {
+            if (body != null) conn.outputStream.use { it.write(body) }
+            if (conn.responseCode !in 200..299) {
+                val text = conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.readText().orEmpty()
+                val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+                return@withContext ApiResult.Err(
+                    json.optString("code").ifBlank { "HTTP_${conn.responseCode}" },
+                    json.optString("message").ifBlank { "서버 오류 ${conn.responseCode}" },
+                    conn.responseCode
+                )
+            }
+            if (method == "GET") {
+                ApiResult.Ok(parse("", conn))
+            } else {
+                val text = conn.inputStream.bufferedReader(StandardCharsets.UTF_8).readText()
+                val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+                if (json.optBoolean("ok", true)) ApiResult.Ok(parse(text, conn))
+                else ApiResult.Err(json.optString("code").ifBlank { "HTTP_${conn.responseCode}" }, json.optString("message"), conn.responseCode)
+            }
+        } catch (e: IOException) {
+            ApiResult.Err("NETWORK", e.message ?: "서버에 연결할 수 없습니다", 0)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     companion object {
         const val DEFAULT_BASE = "https://material.jayoo.kr/api/v1"
     }
@@ -121,6 +189,8 @@ sealed class ApiResult<out T> {
     data class Ok<T>(val data: T) : ApiResult<T>()
     data class Err(val code: String, val message: String, val http: Int) : ApiResult<Nothing>()
 }
+
+data class PhotoFile(val bytes: ByteArray, val updatedAt: Long)
 
 data class LoginData(
     val accessToken: String,

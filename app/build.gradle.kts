@@ -15,8 +15,8 @@ android {
         applicationId = "kr.baraplt.material"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 29
+        versionName = "1.1.27"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -89,6 +89,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.google.play.app.update)
     implementation(libs.google.play.app.update.ktx)
+    implementation(libs.google.play.services.ads)
+    implementation(libs.google.play.services.code.scanner)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

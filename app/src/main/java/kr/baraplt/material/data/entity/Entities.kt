@@ -16,7 +16,8 @@ data class MaterialEntity(
     val leadTimeDays: Int = 0,
     val note: String = "",
     val isActive: Boolean = true,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val barcode: String = ""
 )
 
 @Entity(
@@ -50,7 +51,20 @@ data class ProductEntity(
     val name: String,
     val sellPrice: Double = 0.0,
     val isActive: Boolean = true,
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val barcode: String = "",
+    val safetyStock: Int = 0
+)
+
+@Entity(
+    tableName = "product_openings",
+    indices = [Index(value = ["productId", "yearMonth"], unique = true)]
+)
+data class ProductOpeningEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val productId: Long,
+    val yearMonth: String,
+    val qty: Int
 )
 
 @Entity(
@@ -105,7 +119,19 @@ data class FinishedCompositionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val finishedGoodId: Long,
     val productId: Long,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val qty: Int = 1
+)
+
+@Entity(
+    tableName = "finished_production",
+    indices = [Index(value = ["finishedGoodId", "workDate"], unique = true)]
+)
+data class FinishedProductionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val finishedGoodId: Long,
+    val workDate: String,
+    val qty: Int
 )
 
 @Entity(

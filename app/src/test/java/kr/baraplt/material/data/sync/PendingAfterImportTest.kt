@@ -41,6 +41,41 @@ class PendingAfterImportTest {
         assertFalse(PendingAfterImport.alreadyOnServer(pending, listOf(server)))
     }
 
+    @Test
+    fun secondSameInboundOfTheDayIsStillSent() {
+        val onServer = listOf(PendingAfterImport.ServerMovement("uid-morning", key()))
+        val pending = listOf("uid-afternoon" to key())
+        assertEquals(emptySet<Int>(), PendingAfterImport.pendingOnServer(pending, onServer))
+    }
+
+    @Test
+    fun pendingWithSameUidIsAlreadyOnServer() {
+        val onServer = listOf(PendingAfterImport.ServerMovement("uid-1", key()))
+        assertEquals(setOf(0), PendingAfterImport.pendingOnServer(listOf("uid-1" to key()), onServer))
+    }
+
+    @Test
+    fun eachImportedRowCoversOnlyOnePending() {
+        val onServer = listOf(PendingAfterImport.ServerMovement("import-1-1-INBOUND-100.0-2026-09-15", key()))
+        val pending = listOf("a" to key(), "b" to key())
+        assertEquals(setOf(0), PendingAfterImport.pendingOnServer(pending, onServer))
+    }
+
+    @Test
+    fun oneDeleteHidesOnlyOneOfTwinMovementsPreferringId() {
+        val server = listOf(10L to key(), 11L to key())
+        assertEquals(setOf(1), PendingAfterImport.hiddenByDeletes(server, listOf(11L to key())))
+        assertEquals(setOf(0), PendingAfterImport.hiddenByDeletes(server, listOf(99L to key())))
+        assertEquals(setOf(0, 1), PendingAfterImport.hiddenByDeletes(server, listOf(10L to key(), 11L to key())))
+    }
+
+    @Test
+    fun deletingUnsentMovementCancelsOnePendingInsteadOfDeletingOnServer() {
+        val pending = listOf(key(qty = 5.0), key(), key())
+        assertEquals(1, PendingAfterImport.unsentMovementIndex(pending, key()))
+        assertEquals(-1, PendingAfterImport.unsentMovementIndex(pending, key(qty = 7.0)))
+    }
+
     private fun key(
         codeNo: Int = 1,
         materialId: Long = 1,

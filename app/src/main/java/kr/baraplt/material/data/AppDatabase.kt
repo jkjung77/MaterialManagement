@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import kr.baraplt.material.domain.WorkspaceId
 import kr.baraplt.material.data.dao.BomDao
@@ -17,9 +19,13 @@ import kr.baraplt.material.data.dao.OpeningStockDao
 import kr.baraplt.material.data.dao.ProductDao
 import kr.baraplt.material.data.dao.ProductPlanDao
 import kr.baraplt.material.data.dao.ProductionDao
+import kr.baraplt.material.data.dao.FinishedProductionDao
+import kr.baraplt.material.data.dao.ProductOpeningDao
 import kr.baraplt.material.data.entity.DailyProductionEntity
 import kr.baraplt.material.data.entity.FinishedCompositionEntity
 import kr.baraplt.material.data.entity.FinishedGoodEntity
+import kr.baraplt.material.data.entity.FinishedProductionEntity
+import kr.baraplt.material.data.entity.ProductOpeningEntity
 import kr.baraplt.material.data.entity.MaterialEntity
 import kr.baraplt.material.data.entity.MonthCloseEntity
 import kr.baraplt.material.data.entity.MonthlyPlanEntity
@@ -41,9 +47,11 @@ import kr.baraplt.material.data.entity.StockMovementEntity
         FinishedGoodEntity::class,
         FinishedCompositionEntity::class,
         MonthlyPlanEntity::class,
-        MonthCloseEntity::class
+        MonthCloseEntity::class,
+        ProductOpeningEntity::class,
+        FinishedProductionEntity::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -58,13 +66,46 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun composition(): CompositionDao
     abstract fun monthlyPlans(): MonthlyPlanDao
     abstract fun closes(): MonthCloseDao
+    abstract fun productOpenings(): ProductOpeningDao
+    abstract fun finishedProduction(): FinishedProductionDao
 
     companion object {
         fun create(context: Context, workspaceId: String): AppDatabase {
             val fileName = resolveFileName(context, workspaceId)
             return Room.databaseBuilder(context, AppDatabase::class.java, fileName)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .fallbackToDestructiveMigration()
                 .build()
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN safetyStock INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE finished_composition ADD COLUMN qty INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `product_openings` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`productId` INTEGER NOT NULL, `yearMonth` TEXT NOT NULL, `qty` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_product_openings_productId_yearMonth` " +
+                        "ON `product_openings` (`productId`, `yearMonth`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `finished_production` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`finishedGoodId` INTEGER NOT NULL, `workDate` TEXT NOT NULL, `qty` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_finished_production_finishedGoodId_workDate` " +
+                        "ON `finished_production` (`finishedGoodId`, `workDate`)"
+                )
+            }
+        }
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE materials ADD COLUMN barcode TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE products ADD COLUMN barcode TEXT NOT NULL DEFAULT ''")
+            }
         }
 
         internal fun resolveFileName(context: Context, workspaceId: String): String {

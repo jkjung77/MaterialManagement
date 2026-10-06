@@ -31,6 +31,7 @@ CREATE TABLE materials (
     safety_stock    DOUBLE PRECISION NOT NULL DEFAULT 0,
     lead_time_days  INT NOT NULL DEFAULT 0,
     note            TEXT NOT NULL DEFAULT '',
+    barcode         TEXT NOT NULL DEFAULT '',
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at      BIGINT NOT NULL,
     UNIQUE (workspace_id, code_no)
@@ -69,10 +70,21 @@ CREATE TABLE products (
     workspace_id    BIGINT NOT NULL REFERENCES workspaces(id),
     code_no         INT NOT NULL,
     name            TEXT NOT NULL,
+    barcode         TEXT NOT NULL DEFAULT '',
     sell_price      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    safety_stock    INT NOT NULL DEFAULT 0,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at      BIGINT NOT NULL,
     UNIQUE (workspace_id, code_no)
+);
+
+CREATE TABLE product_openings (
+    id              BIGSERIAL PRIMARY KEY,
+    workspace_id    BIGINT NOT NULL REFERENCES workspaces(id),
+    product_id      BIGINT NOT NULL REFERENCES products(id),
+    year_month      CHAR(7) NOT NULL,
+    qty             INT NOT NULL,
+    UNIQUE (workspace_id, product_id, year_month)
 );
 
 CREATE TABLE product_bom (
@@ -146,4 +158,13 @@ CREATE TABLE month_closes (
     closed_by       BIGINT REFERENCES users(id),
     closed_by_name  TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (workspace_id, year_month)
+);
+
+CREATE TABLE item_photos (
+    workspace_id    BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    kind            TEXT NOT NULL,
+    code_no         INT NOT NULL,
+    updated_at      BIGINT NOT NULL,
+    image           BYTEA NOT NULL,
+    PRIMARY KEY (workspace_id, kind, code_no)
 );

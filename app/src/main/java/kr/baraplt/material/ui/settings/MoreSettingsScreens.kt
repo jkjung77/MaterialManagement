@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kr.baraplt.material.domain.BomImport
+import kr.baraplt.material.domain.ScreenLabels
 import kr.baraplt.material.domain.UserRole
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.AppViewModel
@@ -65,7 +68,7 @@ fun MoreScreen(
                 MenuRow("단품 기초정보", "단품 등록, BOM(US), 판매단가", onProducts)
             }
             item {
-                MenuRow("완제품 · 월계획", "고객사 아이템 구성과 월 생산계획", onFinished)
+                MenuRow("완제품 · 월계획", "구성, 월계획, 완성품 일일 실적", onFinished)
             }
             item {
                 MenuRow("입출고 이력", "입고 / 반출 / 폐기 / 재고조정", onHistory)
@@ -148,6 +151,14 @@ fun SettingsScreen(
     var newFactoryPassword by remember { mutableStateOf("") }
     var newFactoryConfirm by remember { mutableStateOf("") }
     var confirmSeed by remember { mutableStateOf(false) }
+    var bomPlan by remember { mutableStateOf<BomImport.Plan?>(null) }
+    val savedLabels by vm.screenLabels.collectAsStateWithLifecycle()
+    var labelTitle by remember(savedLabels) { mutableStateOf(savedLabels.title) }
+    var labelMaterials by remember(savedLabels) { mutableStateOf(savedLabels.materials) }
+    var labelProduction by remember(savedLabels) { mutableStateOf(savedLabels.production) }
+    var labelReport by remember(savedLabels) { mutableStateOf(savedLabels.report) }
+    var gradeGood by remember(state.gradeGood) { mutableStateOf(state.gradeGood.toString()) }
+    var gradeNormal by remember(state.gradeNormal) { mutableStateOf(state.gradeNormal.toString()) }
 
     val exportXlsxLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -184,6 +195,17 @@ fun SettingsScreen(
                 }
                 vm.importJson(text)
             }.onFailure { vm.show("복원 실패: ${it.message}") }
+        }
+    }
+    val bomImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                }
+                bomPlan = vm.planBomImport(bytes)
+            }.onFailure { vm.show("엑셀을 읽지 못했습니다. .xlsx 파일인지 확인하세요") }
         }
     }
 
@@ -224,6 +246,44 @@ fun SettingsScreen(
                 TextFieldPlain(name, { name = it }, "사용자 이름")
                 Spacer(Modifier.height(8.dp))
                 PrimaryButton("이름 저장") { vm.setStaffName(name) }
+            }
+            if (state.role == UserRole.MANAGER) {
+                item { SectionTitle("화면 부제목") }
+                item {
+                    Text(
+                        "공장 용도에 맞게 괄호 안 이름을 붙입니다. 예: 만능자재관리(물류), 자재(출하). 비우면 붙지 않습니다. 서버에 저장되어 이 공장 폰 모두 같아집니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextFieldPlain(labelTitle, { labelTitle = it.take(ScreenLabels.MAX) }, "만능자재관리( ) 예: 물류")
+                    Spacer(Modifier.height(8.dp))
+                    TextFieldPlain(labelMaterials, { labelMaterials = it.take(ScreenLabels.MAX) }, "자재( ) 예: 출하")
+                    Spacer(Modifier.height(8.dp))
+                    TextFieldPlain(labelProduction, { labelProduction = it.take(ScreenLabels.MAX) }, "생산( ) 예: 서열")
+                    Spacer(Modifier.height(8.dp))
+                    TextFieldPlain(labelReport, { labelReport = it.take(ScreenLabels.MAX) }, "실적( ) 예: 물류결산")
+                    Spacer(Modifier.height(8.dp))
+                    PrimaryButton("부제목 저장") {
+                        vm.saveScreenLabels(ScreenLabels(labelTitle, labelMaterials, labelProduction, labelReport))
+                    }
+                }
+            }
+            item { SectionTitle("자재투입비율 기준") }
+            item {
+                Text(
+                    "자재 사용금액 ÷ 판매금액. 좋음 이하이면 좋음, 보통 이하이면 보통, 그 위는 주의입니다.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                NumberField(gradeGood, { gradeGood = it }, "좋음 상한", suffix = "%")
+                NumberField(gradeNormal, { gradeNormal = it }, "보통 상한", suffix = "%")
+                PrimaryButton("비율 기준 저장", enabled = state.role.name == "MANAGER") {
+                    val good = gradeGood.toIntOrNull()
+                    val normal = gradeNormal.toIntOrNull()
+                    if (good == null || normal == null) vm.show("퍼센트를 입력하세요")
+                    else vm.setGradeBounds(good, normal)
+                }
             }
             item { SectionTitle("권한") }
             item {
@@ -291,17 +351,37 @@ fun SettingsScreen(
                     val factory = state.workspaceId.ifBlank { "공장" }
                     exportLauncher.launch("자재관리-$factory-${state.month.value}.json")
                 }
-                Spacer(Modifier.height(8.dp))
-                GhostButton("백업 파일 가져오기") {
-                    importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                if (state.role == UserRole.MANAGER) {
+                    Spacer(Modifier.height(8.dp))
+                    GhostButton("백업 파일 가져오기") {
+                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }
                 }
             }
-            item { SectionTitle("샘플") }
-            item {
-                GhostButton("엑셀 샘플 데이터 다시 넣기") { confirmSeed = true }
+            if (state.role == UserRole.MANAGER) {
+                item { SectionTitle("투입자재 엑셀") }
+                item {
+                    Text(
+                        "「엑셀로 저장」한 파일의 BOM 시트에서 US만 고쳐 가져옵니다. 단품번호·자재번호로 맞추며, 파일에 있는 단품의 투입자재만 바뀝니다. 줄을 지우거나 US를 0으로 하면 그 자재가 빠집니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    GhostButton("투입자재 엑셀 가져오기") {
+                        bomImportLauncher.launch(
+                            arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", "*/*")
+                        )
+                    }
+                }
+            }
+            if (state.role == UserRole.MANAGER) {
+                item { SectionTitle("샘플") }
+                item {
+                    GhostButton("엑셀 샘플 데이터 다시 넣기") { confirmSeed = true }
+                }
             }
             item {
-                Text("버전 1.1.4 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("버전 1.1.27 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -318,6 +398,43 @@ fun SettingsScreen(
                 }) { Text("다시 넣기") }
             },
             dismissButton = { TextButton({ confirmSeed = false }) { Text("취소") } }
+        )
+    }
+
+    bomPlan?.let { plan ->
+        val skippedText = if (plan.skipped.isEmpty()) "" else buildString {
+            append("\n\n제외 ${plan.skipped.size}건\n")
+            append(plan.skipped.take(6).joinToString("\n"))
+            if (plan.skipped.size > 6) append("\n외 ${plan.skipped.size - 6}건")
+        }
+        val codes = plan.changes.map { it.productCode }
+        val codeText = codes.take(15).joinToString(", ") { "NO.$it" } + if (codes.size > 15) " 외" else ""
+        AlertDialog(
+            onDismissRequest = { bomPlan = null },
+            title = { Text(if (plan.changes.isEmpty()) "바뀔 투입자재가 없습니다" else "투입자재를 바꿀까요?") },
+            text = {
+                Text(
+                    if (plan.changes.isEmpty()) {
+                        "그대로인 단품 ${plan.unchangedProducts}개$skippedText"
+                    } else {
+                        "단품 ${plan.changes.size}개, 투입자재 ${plan.lineCount}줄로 바뀝니다.\n$codeText\n" +
+                            "그대로인 단품 ${plan.unchangedProducts}개. 파일에 없는 단품은 건드리지 않습니다.$skippedText"
+                    }
+                )
+            },
+            confirmButton = {
+                if (plan.changes.isEmpty()) {
+                    TextButton({ bomPlan = null }) { Text("확인") }
+                } else {
+                    TextButton({
+                        bomPlan = null
+                        vm.applyBomImport(plan)
+                    }) { Text("반영") }
+                }
+            },
+            dismissButton = if (plan.changes.isEmpty()) null else {
+                { TextButton({ bomPlan = null }) { Text("취소") } }
+            }
         )
     }
 }

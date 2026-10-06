@@ -17,6 +17,7 @@ import kr.baraplt.material.domain.StockStatus
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.formatPct
 import kr.baraplt.material.domain.formatQty
+import kr.baraplt.material.domain.ratioGrade
 import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.components.AppListCard
 import kr.baraplt.material.ui.components.AppScreenScaffold
@@ -28,6 +29,7 @@ import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.StatusChip
 import kr.baraplt.material.ui.components.TwoCol
+import kr.baraplt.material.domain.ScreenLabels
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,13 +39,16 @@ fun HomeScreen(
     onNextMonth: () -> Unit,
     onInbound: () -> Unit,
     onProduction: () -> Unit,
+    onFinishedOutput: () -> Unit = {},
     onScrap: () -> Unit,
     onStocktake: () -> Unit,
     onMaterial: (Long) -> Unit,
-    onSync: () -> Unit = {}
+    onProduct: (Long) -> Unit = {},
+    onSync: () -> Unit = {},
+    titleSub: String = ""
 ) {
     val ws = state.workspace
-    AppScreenScaffold(title = "자재관리") { padding ->
+    AppScreenScaffold(title = ScreenLabels.withSub("만능자재관리", titleSub)) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -83,8 +88,24 @@ fun HomeScreen(
             if (ws != null) {
                 item {
                     TwoCol {
-                        KpiTile("자재투입비율", formatPct(ws.report.materialRatio), ws.report.grade, Modifier.weight(1f))
-                        KpiTile("판매금액", formatMoney(ws.report.salesAmount), "원", Modifier.weight(1f))
+                        KpiTile(
+                            "자재투입비율",
+                            formatPct(ws.report.materialRatio),
+                            ratioGrade(ws.report.salesAmount, ws.report.materialRatio, state.gradeGood, state.gradeNormal),
+                            Modifier.weight(1f)
+                        )
+                        KpiTile("판매금액(단품)", formatMoney(ws.report.salesAmount), "원", Modifier.weight(1f))
+                    }
+                }
+                item {
+                    TwoCol {
+                        KpiTile(
+                            "완성품 실적",
+                            formatMoney(ws.report.finishedSalesAmount),
+                            "${ws.report.finishedProducedQty}대/개",
+                            Modifier.weight(1f)
+                        )
+                        KpiTile("단품생산", "${ws.report.producedQty}", "대/개", Modifier.weight(1f))
                     }
                 }
                 item {
@@ -96,8 +117,9 @@ fun HomeScreen(
                 item {
                     TwoCol {
                         val low = ws.materials.count { it.status != StockStatus.OK }
+                        val productLow = ws.products.count { it.stockLow }
                         KpiTile("재고경보", "${low}건", "안전재고 이하", Modifier.weight(1f))
-                        KpiTile("단품생산", "${ws.report.producedQty}", "대/개", Modifier.weight(1f))
+                        KpiTile("단품경보", "${productLow}건", "단품 안전재고 이하", Modifier.weight(1f))
                     }
                 }
                 item { SectionTitle("오늘 할 일") }
@@ -106,14 +128,27 @@ fun HomeScreen(
                     Spacer(Modifier.height(8.dp))
                     PrimaryButton("단품 생산실적", onClick = onProduction)
                     Spacer(Modifier.height(8.dp))
+                    PrimaryButton("완성품 실적", onClick = onFinishedOutput)
+                    Spacer(Modifier.height(8.dp))
                     TwoCol {
                         GhostButton("폐기/반출", Modifier.weight(1f), enabled = state.canEditOps, onClick = onScrap)
                         GhostButton("재고조사", Modifier.weight(1f), onClick = onStocktake)
                     }
                 }
+                val productAlerts = ws.products.filter { it.stockLow }
+                if (productAlerts.isNotEmpty()) {
+                    item { SectionTitle("단품 안전재고 경보") }
+                    items(productAlerts, key = { "p-${it.id}" }) { p ->
+                        AppListCard(
+                            title = "NO.${p.codeNo}  ${p.name}",
+                            subtitle = "현재고 ${p.current} · 안전 ${p.safetyStock} · 생산 ${p.produced} · 완성품투입 ${p.consumed}",
+                            onClick = { onProduct(p.id) }
+                        )
+                    }
+                }
                 val alerts = ws.materials.filter { it.status != StockStatus.OK }
                 if (alerts.isNotEmpty()) {
-                    item { SectionTitle("안전재고 경보") }
+                    item { SectionTitle("자재 안전재고 경보") }
                     items(alerts, key = { it.id }) { m ->
                         AppListCard(
                             title = "NO.${m.codeNo}  ${m.name}",
