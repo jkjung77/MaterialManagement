@@ -36,6 +36,9 @@ class SettingsStore(private val context: Context) {
     private val gradeGoodKey = intPreferencesKey("grade_good_percent")
     private val gradeNormalKey = intPreferencesKey("grade_normal_percent")
     private val screenLabelsKey = stringPreferencesKey("screen_labels")
+    private val canEditMastersKey = booleanPreferencesKey("can_edit_masters")
+    private val managerPasswordSetKey = booleanPreferencesKey("manager_password_set")
+    private val mastersUntilKey = longPreferencesKey("masters_until")
 
     val screenLabels: Flow<ScreenLabels> = context.dataStore.data.map {
         ScreenLabels.decode(it[screenLabelsKey], it[workspaceIdKey].orEmpty())
@@ -48,6 +51,29 @@ class SettingsStore(private val context: Context) {
     val role: Flow<UserRole> = context.dataStore.data.map {
         runCatching { UserRole.valueOf(it[roleKey] ?: UserRole.STAFF.name) }
             .getOrDefault(UserRole.STAFF)
+    }
+
+    /** 서버가 정한 권한. 관리책임자가 아니어도 기초정보 수정 권한을 받을 수 있다. */
+    val access: Flow<ServerAccess> = context.dataStore.data.map {
+        val role = runCatching { UserRole.valueOf(it[roleKey] ?: UserRole.STAFF.name) }.getOrDefault(UserRole.STAFF)
+        ServerAccess(
+            role = role,
+            canEditMasters = role == UserRole.MANAGER || (it[canEditMastersKey] ?: false),
+            managerPasswordSet = it[managerPasswordSetKey] ?: true,
+            mastersUntil = it[mastersUntilKey] ?: 0L
+        )
+    }
+
+    suspend fun setMastersUntil(until: Long) {
+        context.dataStore.edit { it[mastersUntilKey] = until }
+    }
+
+    suspend fun setAccess(role: UserRole, canEditMasters: Boolean, managerPasswordSet: Boolean? = null) {
+        context.dataStore.edit {
+            it[roleKey] = role.name
+            it[canEditMastersKey] = canEditMasters
+            if (managerPasswordSet != null) it[managerPasswordSetKey] = managerPasswordSet
+        }
     }
 
     val managerPin: Flow<String> = context.dataStore.data.map { it[pinKey] ?: "0000" }
@@ -187,4 +213,13 @@ class SettingsStore(private val context: Context) {
             }.getOrDefault(emptyMap())
         }
     }
+}
+
+data class ServerAccess(
+    val role: UserRole = UserRole.STAFF,
+    val canEditMasters: Boolean = false,
+    val managerPasswordSet: Boolean = true,
+    val mastersUntil: Long = 0L
+) {
+    fun mastersOpen(now: Long = System.currentTimeMillis()): Boolean = canEditMasters || mastersUntil > now
 }

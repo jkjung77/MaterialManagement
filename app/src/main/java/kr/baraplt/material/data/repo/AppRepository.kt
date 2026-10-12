@@ -19,6 +19,7 @@ import kr.baraplt.material.data.entity.ProductBomEntity
 import kr.baraplt.material.data.entity.ProductEntity
 import kr.baraplt.material.data.entity.ProductPlanEntity
 import kr.baraplt.material.data.entity.StockMovementEntity
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.BomImport
 import kr.baraplt.material.domain.BomLine
 import kr.baraplt.material.domain.FinishedSnapshot
@@ -212,9 +213,9 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun isClosed(month: YearMonthKey): Boolean = db.closes().get(month.value) != null
 
-    suspend fun nextMaterialNo(): Int = (db.materials().maxCode() + 1).coerceAtMost(500)
-    suspend fun nextProductNo(): Int = (db.products().maxCode() + 1).coerceAtMost(500)
-    suspend fun nextFinishedNo(): Int = (db.finished().maxCode() + 1).coerceAtMost(500)
+    suspend fun nextMaterialNo(): Int = (db.materials().maxCode() + 1).coerceAtMost(CodeNo.MAX)
+    suspend fun nextProductNo(): Int = (db.products().maxCode() + 1).coerceAtMost(CodeNo.MAX)
+    suspend fun nextFinishedNo(): Int = (db.finished().maxCode() + 1).coerceAtMost(CodeNo.MAX)
 
     suspend fun deleteMaterial(id: Long): String? {
         val reason = MaterialDeletePolicy.blockReason(

@@ -24,7 +24,7 @@
 
 ### 1.3 규모
 - 공장(워크스페이스) 여러 개. 예: `경주1공장`, `경주2공장`, `성남공장`
-- 공장당 자재 번호 1~500, 단품 1~500(BOM 최대 30), 완제품 1~500(구성 최대 30)
+- 공장당 자재 번호 1~1000, 단품 1~1000(BOM 최대 30), 완제품 1~1000(구성 최대 30)
 - 공장당 동시 사용자 약 3명 (관리책임자 1 + 담당)
 - 공장 간 데이터는 **완전히 분리**. 다른 공장 ID로는 조회·수정 불가.
 
@@ -151,7 +151,7 @@
 |---|---|---|
 | id | long | |
 | workspaceId | long | |
-| codeNo | int | 1~500, unique **(workspaceId + codeNo)** |
+| codeNo | int | 1~1000, unique **(workspaceId + codeNo)** |
 | name | string | 자재명(품목) |
 | unit | string | `ea` / `kg` / `m` / `roll` 등 |
 | packUnit | string | 선택. 예: `500(포대)` |
@@ -197,7 +197,7 @@
 |---|---|---|
 | id | long | |
 | workspaceId | long | |
-| codeNo | int | 1~500 unique (workspaceId + codeNo) |
+| codeNo | int | 1~1000 unique (workspaceId + codeNo) |
 | name | string | FRT, CTR, STEP1 … |
 | barcode | string | 선택. 번호와 별도. 예: `VN05L` |
 | sellPrice | number | 단품판매단가 |
@@ -243,7 +243,7 @@ US는 월평균 중량 체크값(현장 입력). 매일 바뀌지 않고 마스�
 |---|---|---|
 | id | long | |
 | workspaceId | long | |
-| codeNo | int | 1~500 unique (workspaceId + codeNo) |
+| codeNo | int | 1~1000 unique (workspaceId + codeNo) |
 | name | string | A1SPK 등 |
 | sellPrice | number | |
 | isActive | bool | |

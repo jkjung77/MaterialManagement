@@ -1,6 +1,7 @@
 package kr.baraplt.material.data
 
 import android.content.Context
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.PhotoStamp
 import kr.baraplt.material.domain.WorkspaceId
 import java.io.File
@@ -12,7 +13,7 @@ class ItemPhotoStore(private val root: File) {
     fun stamps(): List<PhotoStamp> = synchronized(lock) { readIndex() }
 
     fun exists(kind: String, codeNo: Int): Boolean = synchronized(lock) {
-        if ((kind != "material" && kind != "product") || codeNo !in 1..500) return false
+        if ((kind != "material" && kind != "product") || codeNo !in 1..CodeNo.MAX) return false
         imageFile(kind, codeNo).isFile
     }
 
@@ -62,7 +63,7 @@ class ItemPhotoStore(private val root: File) {
 
     private fun imageFile(kind: String, codeNo: Int): File {
         require(kind == "material" || kind == "product") { "kind" }
-        require(codeNo in 1..500) { "code" }
+        require(codeNo in 1..CodeNo.MAX) { "code" }
         return File(root, "$kind/$codeNo.jpg")
     }
 
@@ -75,7 +76,7 @@ class ItemPhotoStore(private val root: File) {
             val code = parts[1].toIntOrNull() ?: return@mapNotNull null
             val updated = parts[2].toLongOrNull() ?: return@mapNotNull null
             if (kind != "material" && kind != "product") return@mapNotNull null
-            if (code !in 1..500) return@mapNotNull null
+            if (code !in 1..CodeNo.MAX) return@mapNotNull null
             PhotoStamp(kind, code, updated, deleted = parts[3] == "1")
         }
     }

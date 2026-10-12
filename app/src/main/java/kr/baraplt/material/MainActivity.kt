@@ -44,6 +44,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kr.baraplt.material.ui.AppViewModel
 import kr.baraplt.material.ui.components.BannerAd
+import kr.baraplt.material.ui.components.rememberMastersGuard
 import kr.baraplt.material.ui.finished.FinishedEditScreen
 import kr.baraplt.material.ui.finished.FinishedListScreen
 import kr.baraplt.material.ui.finished.FinishedOutputScreen
@@ -209,11 +210,12 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 )
             }
             composable(Dest.Materials.route) {
+                val guard = rememberMastersGuard(state, vm)
                 MaterialListScreen(
                     state = state,
                     onOpen = { nav.navigate(Routes.materialDetail(it)) },
-                    onAdd = { nav.navigate("${Routes.MATERIAL_EDIT}?id=") },
-                    canAdd = state.role.name == "MANAGER",
+                    onAdd = { guard { nav.navigate("${Routes.MATERIAL_EDIT}?id=") } },
+                    canAdd = state.mastersReachable,
                     onMessage = vm::show
                 )
             }
@@ -247,12 +249,13 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 arguments = listOf(navArgument("id") { type = NavType.LongType })
             ) { entry ->
                 val id = entry.arguments?.getLong("id") ?: return@composable
+                val guard = rememberMastersGuard(state, vm)
                 MaterialDetailScreen(
                     state = state,
                     vm = vm,
                     materialId = id,
                     onBack = { nav.popBackStack() },
-                    onEdit = { nav.navigate("${Routes.MATERIAL_EDIT}?id=$id") },
+                    onEdit = { guard { nav.navigate("${Routes.MATERIAL_EDIT}?id=$id") } },
                     onInbound = { nav.navigate("${Routes.movement("INBOUND")}?materialId=$id") },
                     onScrap = { nav.navigate("${Routes.movement("SCRAP")}?materialId=$id") }
                 )
@@ -276,10 +279,11 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 MovementScreen(state, vm, type, mid) { nav.popBackStack() }
             }
             composable(Routes.PRODUCTS) {
+                val guard = rememberMastersGuard(state, vm)
                 kr.baraplt.material.ui.product.ProductListScreen(
                     state = state,
                     onOpen = { nav.navigate(Routes.productDetail(it)) },
-                    onAdd = { nav.navigate("${Routes.PRODUCT_EDIT}?id=") },
+                    onAdd = { guard { nav.navigate("${Routes.PRODUCT_EDIT}?id=") } },
                     onBack = { nav.popBackStack() },
                     onMessage = vm::show
                 )
@@ -289,13 +293,14 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 arguments = listOf(navArgument("id") { type = NavType.LongType })
             ) { entry ->
                 val id = entry.arguments?.getLong("id") ?: return@composable
+                val guard = rememberMastersGuard(state, vm)
                 ProductDetailScreen(
                     state = state,
                     vm = vm,
                     productId = id,
                     onBack = { nav.popBackStack() },
-                    onEdit = { nav.navigate("${Routes.PRODUCT_EDIT}?id=$id") },
-                    onCopy = { nav.navigate("${Routes.PRODUCT_EDIT}?id=&copy=$id") },
+                    onEdit = { guard { nav.navigate("${Routes.PRODUCT_EDIT}?id=$id") } },
+                    onCopy = { guard { nav.navigate("${Routes.PRODUCT_EDIT}?id=&copy=$id") } },
                     onProduction = {
                         productionPick = id
                         nav.navigate(Dest.Production.route) {
@@ -321,12 +326,13 @@ private fun MaterialAppRoot(vm: AppViewModel = viewModel()) {
                 ) { nav.popBackStack() }
             }
             composable(Routes.FINISHED) {
+                val guard = rememberMastersGuard(state, vm)
                 FinishedListScreen(
                     state = state,
                     vm = vm,
                     onBack = { nav.popBackStack() },
-                    onAdd = { nav.navigate("${Routes.FINISHED_EDIT}?id=") },
-                    onEdit = { nav.navigate("${Routes.FINISHED_EDIT}?id=$it") },
+                    onAdd = { guard { nav.navigate("${Routes.FINISHED_EDIT}?id=") } },
+                    onEdit = { fid -> guard { nav.navigate("${Routes.FINISHED_EDIT}?id=$fid") } },
                     onOutput = { nav.navigate(Routes.FINISHED_OUTPUT) }
                 )
             }

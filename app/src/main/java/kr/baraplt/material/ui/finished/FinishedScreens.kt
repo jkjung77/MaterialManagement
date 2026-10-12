@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kr.baraplt.material.data.entity.FinishedGoodEntity
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.formatPct
 import kr.baraplt.material.domain.formatQtyExact
@@ -49,6 +50,7 @@ import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.TextFieldPlain
+import kr.baraplt.material.ui.components.rememberMastersGuard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +62,7 @@ fun FinishedListScreen(
     onEdit: (Long) -> Unit,
     onOutput: () -> Unit = {}
 ) {
+    val guard = rememberMastersGuard(state, vm)
     var query by remember { mutableStateOf("") }
     val finished = state.workspace?.finished.orEmpty().filter { item ->
         query.isBlank() ||
@@ -71,7 +74,7 @@ fun FinishedListScreen(
         title = "완제품 · 월계획",
         onBack = onBack,
         actions = {
-            if (state.role.name == "MANAGER") {
+            if (state.mastersReachable) {
                 IconButton(onAdd) { Icon(Icons.Default.Add, contentDescription = "추가") }
             }
         }
@@ -91,7 +94,7 @@ fun FinishedListScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
             items(finished, key = { it.id }) { f ->
-                AppCard(onClick = { if (state.role.name == "MANAGER") onEdit(f.id) }) {
+                AppCard(onClick = { if (state.mastersReachable) onEdit(f.id) }) {
                     Text("NO.${f.codeNo}  ${f.name}", style = MaterialTheme.typography.titleMedium)
                     KeyValue("판매단가", "${formatMoney(f.sellPrice)}원")
                     KeyValue("완제품 자재비", "${formatMoney(f.materialCost)}원")
@@ -99,17 +102,19 @@ fun FinishedListScreen(
                     KeyValue("월 생산계획", f.monthPlan.toString())
                     KeyValue("이달 실적", "${f.produced} · ${formatMoney(f.salesAmount)}원")
                     Text("구성: ${f.productNames.joinToString(" + ").ifBlank { "-"} }", style = MaterialTheme.typography.bodyMedium)
-                    if (state.canEditOps && state.role.name == "MANAGER") {
+                    if (state.canEditOps && state.mastersReachable) {
                         Spacer(Modifier.height(8.dp))
                         var plan by remember(f.id, f.monthPlan) { mutableStateOf(f.monthPlan.takeIf { it > 0 }?.toString().orEmpty()) }
                         NumberField(plan, { plan = it }, "이달 월계획 수정")
                         GhostButton("계획 저장") {
                             val q = parseNumber(plan)?.toInt() ?: 0
-                            vm.saveFinished(
-                                FinishedGoodEntity(id = f.id, codeNo = f.codeNo, name = f.name, sellPrice = f.sellPrice),
-                                f.productIds.mapIndexed { i, id -> id to f.qtyAt(i) },
-                                q
-                            )
+                            guard {
+                                vm.saveFinished(
+                                    FinishedGoodEntity(id = f.id, codeNo = f.codeNo, name = f.name, sellPrice = f.sellPrice),
+                                    f.productIds.mapIndexed { i, id -> id to f.qtyAt(i) },
+                                    q
+                                )
+                            }
                         }
                     }
                 }
@@ -140,6 +145,7 @@ fun FinishedEditScreen(
         mutableStateListOf<Long>().also { it.addAll(existing?.productIds.orEmpty()) }
     }
     val scope = rememberCoroutineScope()
+    val guard = rememberMastersGuard(state, vm)
     LaunchedEffect(existingId) {
         if (existing == null && code.isEmpty()) code = vm.nextFinishedNo().toString()
     }
@@ -149,7 +155,7 @@ fun FinishedEditScreen(
             contentPadding = PaddingValues(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { NumberField(code, { code = it }, "완제품번호 (1~500)") }
+            item { NumberField(code, { code = it }, "완제품번호 (1~${CodeNo.MAX})") }
             item { TextFieldPlain(name, { name = it }, "완제품명(Item)") }
             item { NumberField(price, { price = it }, "완제품 판매단가", suffix = "원") }
             item { NumberField(plan, { plan = it }, "이달 월 생산계획") }
@@ -175,30 +181,32 @@ fun FinishedEditScreen(
             item {
                 PrimaryButton("저장", onClick = {
                     val no = parseNumber(code)?.toInt()
-                    if (no == null || no !in 1..500 || name.isBlank()) {
-                        vm.show("번호(1~500)와 완제품명을 확인하세요")
+                    if (no == null || !CodeNo.valid(no) || name.isBlank()) {
+                        vm.show("번호(1~${CodeNo.MAX})와 완제품명을 확인하세요")
                         return@PrimaryButton
                     }
                     if (saving) return@PrimaryButton
-                    saving = true
-                    vm.saveFinished(
-                        FinishedGoodEntity(
-                            id = existing?.id ?: 0,
-                            codeNo = no,
-                            name = name.trim(),
-                            sellPrice = parseNumber(price) ?: 0.0
-                        ),
-                        selected.map { id ->
-                            val idx = existing?.productIds?.indexOf(id) ?: -1
-                            id to if (idx >= 0) existing!!.qtyAt(idx) else 1
-                        },
-                        parseNumber(plan)?.toInt()
-                    ) { ok -> if (ok) onBack() else saving = false }
-                }, enabled = state.role.name == "MANAGER" && !saving)
+                    guard {
+                        saving = true
+                        vm.saveFinished(
+                            FinishedGoodEntity(
+                                id = existing?.id ?: 0,
+                                codeNo = no,
+                                name = name.trim(),
+                                sellPrice = parseNumber(price) ?: 0.0
+                            ),
+                            selected.map { id ->
+                                val idx = existing?.productIds?.indexOf(id) ?: -1
+                                id to if (idx >= 0) existing!!.qtyAt(idx) else 1
+                            },
+                            parseNumber(plan)?.toInt()
+                        ) { ok -> if (ok) onBack() else saving = false }
+                    }
+                }, enabled = state.mastersReachable && !saving)
             }
-            if (existing != null && state.role.name == "MANAGER") {
+            if (existing != null && state.mastersReachable) {
                 item {
-                    GhostButton("완제품 삭제") { confirmDelete = true }
+                    GhostButton("완제품 삭제") { guard { confirmDelete = true } }
                 }
             }
         }

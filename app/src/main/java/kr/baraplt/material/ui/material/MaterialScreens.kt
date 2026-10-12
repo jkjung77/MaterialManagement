@@ -41,6 +41,7 @@ import kr.baraplt.material.ui.components.rememberBarcodeScan
 import kr.baraplt.material.domain.MovementType
 import kr.baraplt.material.domain.StockStatus
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.formatQty
 import kr.baraplt.material.domain.formatQtyExact
@@ -63,6 +64,7 @@ import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.StatusChip
 import kr.baraplt.material.ui.components.TextFieldPlain
+import kr.baraplt.material.ui.components.rememberMastersGuard
 
 @Composable
 fun MaterialListScreen(
@@ -135,6 +137,7 @@ fun MaterialDetailScreen(
     onInbound: () -> Unit,
     onScrap: () -> Unit
 ) {
+    val guard = rememberMastersGuard(state, vm)
     var confirmDelete by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<StockMovementEntity?>(null) }
     var editQty by remember { mutableStateOf("") }
@@ -227,10 +230,10 @@ fun MaterialDetailScreen(
                 Spacer(Modifier.height(8.dp))
                 GhostButton("폐기 / 반출", enabled = state.canEditOps, onClick = onScrap)
                 Spacer(Modifier.height(8.dp))
-                if (state.role.name == "MANAGER") {
+                if (state.mastersReachable) {
                     GhostButton("기초정보 수정", onClick = onEdit)
                     Spacer(Modifier.height(8.dp))
-                    GhostButton("자재 삭제") { confirmDelete = true }
+                    GhostButton("자재 삭제") { guard { confirmDelete = true } }
                 }
             }
         }
@@ -333,6 +336,7 @@ fun MaterialEditScreen(
     var photoRemoved by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val guard = rememberMastersGuard(state, vm)
     LaunchedEffect(existingId, existing) {
         if (existing == null && existingId == null && code.isEmpty()) {
             code = vm.nextMaterialNo().toString()
@@ -343,7 +347,7 @@ fun MaterialEditScreen(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { NumberField(code, { code = it }, "자재번호 (1~500)") }
+            item { NumberField(code, { code = it }, "자재번호 (1~${CodeNo.MAX})") }
             item { TextFieldPlain(name, { name = it }, "자재명(품목)") }
             item { TextFieldPlain(barcode, { barcode = it.trim().uppercase() }, "바코드 (예: VN05L)") }
             item {
@@ -366,7 +370,7 @@ fun MaterialEditScreen(
                     epoch = state.photoEpoch,
                     pending = pendingPhoto,
                     removed = photoRemoved,
-                    enabled = state.role.name == "MANAGER",
+                    enabled = state.mastersReachable,
                     onPicked = {
                         pendingPhoto = it
                         photoRemoved = false
@@ -381,8 +385,8 @@ fun MaterialEditScreen(
             item {
                 PrimaryButton("저장", onClick = {
                     val no = parseNumber(code)?.toInt()
-                    if (no == null || no !in 1..500) {
-                        vm.show("자재번호는 1~500입니다")
+                    if (no == null || !CodeNo.valid(no)) {
+                        vm.show("자재번호는 1~${CodeNo.MAX}입니다")
                         return@PrimaryButton
                     }
                     if (name.isBlank()) {
@@ -390,26 +394,28 @@ fun MaterialEditScreen(
                         return@PrimaryButton
                     }
                     if (saving) return@PrimaryButton
-                    saving = true
-                    scope.launch {
-                        val ok = vm.saveMaterial(
-                            MaterialEntity(
-                                id = existing?.id ?: 0,
-                                codeNo = no,
-                                name = name.trim(),
-                                unit = unit,
-                                packUnit = pack.trim(),
-                                unitPrice = parseNumber(price) ?: 0.0,
-                                safetyStock = parseNumber(safety) ?: 0.0,
-                                leadTimeDays = parseNumber(lead)?.toInt() ?: 0,
-                                barcode = barcode.trim().uppercase()
-                            ),
-                            opening = parseNumber(opening),
-                            photo = ItemPhotoEdit("material", existing?.codeNo, no, pendingPhoto, photoRemoved)
-                        )
-                        if (ok) onBack() else saving = false
+                    guard {
+                        saving = true
+                        scope.launch {
+                            val ok = vm.saveMaterial(
+                                MaterialEntity(
+                                    id = existing?.id ?: 0,
+                                    codeNo = no,
+                                    name = name.trim(),
+                                    unit = unit,
+                                    packUnit = pack.trim(),
+                                    unitPrice = parseNumber(price) ?: 0.0,
+                                    safetyStock = parseNumber(safety) ?: 0.0,
+                                    leadTimeDays = parseNumber(lead)?.toInt() ?: 0,
+                                    barcode = barcode.trim().uppercase()
+                                ),
+                                opening = parseNumber(opening),
+                                photo = ItemPhotoEdit("material", existing?.codeNo, no, pendingPhoto, photoRemoved)
+                            )
+                            if (ok) onBack() else saving = false
+                        }
                     }
-                }, enabled = state.role.name == "MANAGER" && !saving)
+                }, enabled = state.mastersReachable && !saving)
             }
         }
     }

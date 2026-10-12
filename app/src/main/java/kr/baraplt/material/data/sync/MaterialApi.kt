@@ -11,20 +11,74 @@ import java.nio.charset.StandardCharsets
 
 class MaterialApi(private val baseUrl: String = DEFAULT_BASE) {
 
-    suspend fun createWorkspace(code: String, password: String, managerName: String): ApiResult<LoginData> =
+    suspend fun createWorkspace(
+        code: String,
+        password: String,
+        managerName: String,
+        managerPassword: String = ""
+    ): ApiResult<LoginData> =
         request("POST", "/workspaces", auth = null, body = JSONObject()
             .put("code", code)
             .put("password", password)
             .put("name", code)
             .put("managerName", managerName)
+            .put("managerPassword", managerPassword)
         ) { LoginData.from(it.optJSONObject("data") ?: it) }
 
-    suspend fun login(workspaceId: String, password: String, staffName: String): ApiResult<LoginData> =
+    suspend fun login(
+        workspaceId: String,
+        password: String,
+        staffName: String,
+        managerPassword: String = ""
+    ): ApiResult<LoginData> =
         request("POST", "/auth/login", auth = null, body = JSONObject()
             .put("workspaceId", workspaceId)
             .put("password", password)
             .put("staffName", staffName)
+            .put("managerPassword", managerPassword)
         ) { LoginData.from(it.optJSONObject("data") ?: it) }
+
+    suspend fun setManagerPassword(token: String, current: String, next: String): ApiResult<LoginData> =
+        request(
+            "PUT",
+            "/workspaces/me/manager-password",
+            auth = token,
+            body = JSONObject().put("currentPassword", current).put("password", next)
+        ) { LoginData.from(it.optJSONObject("data") ?: it) }
+
+    /** 성공하면 기초정보 수정이 열려 있는 남은 시간(ms). 폰 시계와 서버 시계 차이를 빼고 쓴다. */
+    suspend fun unlockMasters(token: String, managerPassword: String): ApiResult<Long> =
+        request(
+            "POST",
+            "/auth/masters-unlock",
+            auth = token,
+            body = JSONObject().put("managerPassword", managerPassword)
+        ) { root ->
+            val data = root.optJSONObject("data") ?: root
+            (data.optLong("mastersUntil") - root.optLong("serverTime")).coerceAtLeast(0)
+        }
+
+    suspend fun users(token: String): ApiResult<List<WorkspaceUser>> =
+        request("GET", "/workspaces/me/users", auth = token) { root ->
+            val arr = (root.optJSONObject("data") ?: root).optJSONArray("users") ?: JSONArray()
+            arr.toObjList().map {
+                WorkspaceUser(
+                    id = it.optLong("id"),
+                    name = it.optString("name"),
+                    role = it.optString("role"),
+                    canEditMasters = it.optBoolean("canEditMasters"),
+                    isActive = it.optBoolean("isActive", true)
+                )
+            }
+        }
+
+    suspend fun setUserPermission(token: String, userId: Long, canEditMasters: Boolean): ApiResult<JSONObject> =
+        request(
+            "PUT",
+            "/workspaces/me/users/$userId/permissions",
+            auth = token,
+            body = JSONObject().put("canEditMasters", canEditMasters)
+        ) { it.optJSONObject("data") ?: it }
 
     suspend fun changeWorkspacePassword(token: String, current: String, next: String): ApiResult<JSONObject> =
         request(
@@ -197,22 +251,35 @@ data class LoginData(
     val refreshToken: String,
     val workspaceCode: String,
     val userName: String,
-    val role: String
+    val role: String,
+    val canEditMasters: Boolean = false,
+    val managerPasswordSet: Boolean = true
 ) {
     companion object {
         fun from(obj: JSONObject): LoginData {
             val ws = obj.optJSONObject("workspace") ?: JSONObject()
             val user = obj.optJSONObject("user") ?: JSONObject()
+            val role = user.optString("role").ifBlank { "STAFF" }
             return LoginData(
                 accessToken = obj.optString("accessToken"),
                 refreshToken = obj.optString("refreshToken"),
                 workspaceCode = ws.optString("code"),
                 userName = user.optString("name"),
-                role = user.optString("role").ifBlank { "STAFF" }
+                role = role,
+                canEditMasters = role == "MANAGER" || user.optBoolean("canEditMasters"),
+                managerPasswordSet = obj.optBoolean("managerPasswordSet", true)
             )
         }
     }
 }
+
+data class WorkspaceUser(
+    val id: Long,
+    val name: String,
+    val role: String,
+    val canEditMasters: Boolean,
+    val isActive: Boolean
+)
 
 fun JSONArray.toObjList(): List<JSONObject> = buildList {
     for (i in 0 until length()) add(getJSONObject(i))

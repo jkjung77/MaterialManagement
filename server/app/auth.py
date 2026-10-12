@@ -34,6 +34,7 @@ def issue_tokens(user: dict[str, Any], workspace: dict[str, Any]) -> dict[str, A
         "role": user["role"],
         "name": user["name"],
         "tv": workspace["token_version"],
+        "uv": int(user.get("auth_version") or 0),
     }
     access = jwt.encode({**base, "typ": "access", "iat": now, "exp": now + ACCESS_SECONDS}, JWT_SECRET, algorithm="HS256")
     refresh = jwt.encode({**base, "typ": "refresh", "iat": now, "exp": now + REFRESH_SECONDS}, JWT_SECRET, algorithm="HS256")
@@ -42,7 +43,13 @@ def issue_tokens(user: dict[str, Any], workspace: dict[str, Any]) -> dict[str, A
         "expiresIn": ACCESS_SECONDS,
         "refreshToken": refresh,
         "workspace": {"id": workspace["id"], "code": workspace["code"]},
-        "user": {"id": user["id"], "name": user["name"], "role": user["role"]},
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "role": user["role"],
+            "canEditMasters": user["role"] == "MANAGER" or bool(user.get("can_edit_masters")),
+        },
+        "managerPasswordSet": bool(workspace.get("manager_password_hash")),
     }
 
 

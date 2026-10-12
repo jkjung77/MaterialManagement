@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +30,8 @@ fun WorkspaceSetupScreen(vm: AppViewModel, presetId: String = "") {
     var input by remember(presetId) { mutableStateOf(presetId) }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
+    val state by vm.uiState.collectAsState()
+    var name by remember(state.staffName) { mutableStateOf(state.staffName) }
     var error by remember { mutableStateOf<String?>(null) }
     val settingPasswordOnly = presetId.isNotBlank()
 
@@ -54,6 +57,8 @@ fun WorkspaceSetupScreen(vm: AppViewModel, presetId: String = "") {
         PasswordField(password, { password = it; error = null }, "공장 암호 (4자 이상)")
         Spacer(Modifier.height(8.dp))
         PasswordField(confirm, { confirm = it; error = null }, "공장 암호 확인")
+        Spacer(Modifier.height(8.dp))
+        TextFieldPlain(name, { name = it; error = null }, "사용자 이름")
         if (error != null) {
             Spacer(Modifier.height(8.dp))
             Text(error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -61,9 +66,9 @@ fun WorkspaceSetupScreen(vm: AppViewModel, presetId: String = "") {
         Spacer(Modifier.height(16.dp))
         PrimaryButton(if (settingPasswordOnly) "암호 저장 후 시작" else "이 공장으로 시작") {
             if (settingPasswordOnly) {
-                vm.setWorkspacePassword(password, confirm) { err -> error = err }
+                vm.setWorkspacePassword(password, confirm, staffName = name) { err -> error = err }
             } else {
-                vm.joinWorkspace(input, password, confirm) { err -> error = err }
+                vm.joinWorkspace(input, password, confirm, staffName = name) { err -> error = err }
             }
         }
         if (!settingPasswordOnly) {

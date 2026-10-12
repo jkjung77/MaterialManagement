@@ -34,6 +34,7 @@ import kr.baraplt.material.data.entity.ProductBomEntity
 import kr.baraplt.material.data.entity.ProductEntity
 import kr.baraplt.material.domain.BarcodeLookup
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.formatPct
 import kr.baraplt.material.domain.formatQty
@@ -55,6 +56,7 @@ import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.TextFieldPlain
+import kr.baraplt.material.ui.components.rememberMastersGuard
 import kr.baraplt.material.ui.components.rememberBarcodeScan
 
 @Composable
@@ -80,7 +82,7 @@ fun ProductListScreen(
         title = "단품",
         onBack = onBack,
         floatingActionButton = {
-            if (state.role.name == "MANAGER") {
+            if (state.mastersReachable) {
                 FloatingActionButton(onClick = onAdd) {
                     Icon(Icons.Default.Add, contentDescription = "추가")
                 }
@@ -121,6 +123,7 @@ fun ProductDetailScreen(
     onCopy: () -> Unit = {},
     onProduction: () -> Unit
 ) {
+    val guard = rememberMastersGuard(state, vm)
     var confirmDelete by remember { mutableStateOf(false) }
     val p = state.workspace?.products?.firstOrNull { it.id == productId }
     AppScreenScaffold(title = p?.name ?: "단품", onBack = onBack) { padding ->
@@ -159,13 +162,13 @@ fun ProductDetailScreen(
             }
             item {
                 PrimaryButton("생산실적 입력", onClick = onProduction)
-                if (state.role.name == "MANAGER") {
+                if (state.mastersReachable) {
                     Spacer(Modifier.height(8.dp))
                     GhostButton("기초정보 수정", onClick = onEdit)
                     Spacer(Modifier.height(8.dp))
                     GhostButton("이 단품 복사해서 새로 만들기", onClick = onCopy)
                     Spacer(Modifier.height(8.dp))
-                    GhostButton("단품 삭제") { confirmDelete = true }
+                    GhostButton("단품 삭제") { guard { confirmDelete = true } }
                 }
             }
         }
@@ -225,6 +228,7 @@ fun ProductEditScreen(
         }
     }
     val scope = rememberCoroutineScope()
+    val guard = rememberMastersGuard(state, vm)
     LaunchedEffect(existingId) {
         if (existing == null && code.isEmpty()) code = vm.nextProductNo().toString()
     }
@@ -250,7 +254,7 @@ fun ProductEditScreen(
                     )
                 }
             }
-            item { NumberField(code, { code = it }, "단품번호 (1~500)") }
+            item { NumberField(code, { code = it }, "단품번호 (1~${CodeNo.MAX})") }
             item { TextFieldPlain(name, { name = it }, "제품명(단품)") }
             item { TextFieldPlain(barcode, { barcode = it.trim().uppercase() }, "바코드 (예: VN05L)") }
             item { NumberField(price, { price = it }, "단품판매단가", suffix = "원") }
@@ -265,7 +269,7 @@ fun ProductEditScreen(
                     epoch = state.photoEpoch,
                     pending = pendingPhoto,
                     removed = photoRemoved,
-                    enabled = state.role.name == "MANAGER",
+                    enabled = state.mastersReachable,
                     onPicked = {
                         pendingPhoto = it
                         photoRemoved = false
@@ -321,7 +325,7 @@ fun ProductEditScreen(
             item {
                 PrimaryButton("저장", onClick = {
                     val no = parseNumber(code)?.toInt()
-                    if (no == null || no !in 1..500 || name.isBlank()) {
+                    if (no == null || !CodeNo.valid(no) || name.isBlank()) {
                         vm.show("번호와 단품명을 확인하세요")
                         return@PrimaryButton
                     }
@@ -331,24 +335,26 @@ fun ProductEditScreen(
                         else ProductBomEntity(productId = existing?.id ?: 0, materialId = d.materialId, usQty = us)
                     }
                     if (saving) return@PrimaryButton
-                    saving = true
-                    scope.launch {
-                        vm.saveProduct(
-                            ProductEntity(
-                                id = existing?.id ?: 0,
-                                codeNo = no,
-                                name = name.trim(),
-                                sellPrice = parseNumber(price) ?: 0.0,
-                                barcode = barcode.trim().uppercase(),
-                                safetyStock = parseNumber(safety)?.toInt() ?: 0
-                            ),
-                            lines,
-                            parseNumber(plan)?.toInt(),
-                            photo = ItemPhotoEdit("product", existing?.codeNo, no, pendingPhoto, photoRemoved),
-                            opening = parseNumber(opening)?.toInt()
-                        ) { ok -> if (ok) onBack() else saving = false }
+                    guard {
+                        saving = true
+                        scope.launch {
+                            vm.saveProduct(
+                                ProductEntity(
+                                    id = existing?.id ?: 0,
+                                    codeNo = no,
+                                    name = name.trim(),
+                                    sellPrice = parseNumber(price) ?: 0.0,
+                                    barcode = barcode.trim().uppercase(),
+                                    safetyStock = parseNumber(safety)?.toInt() ?: 0
+                                ),
+                                lines,
+                                parseNumber(plan)?.toInt(),
+                                photo = ItemPhotoEdit("product", existing?.codeNo, no, pendingPhoto, photoRemoved),
+                                opening = parseNumber(opening)?.toInt()
+                            ) { ok -> if (ok) onBack() else saving = false }
+                        }
                     }
-                }, enabled = state.role.name == "MANAGER" && !saving)
+                }, enabled = state.mastersReachable && !saving)
             }
         }
     }

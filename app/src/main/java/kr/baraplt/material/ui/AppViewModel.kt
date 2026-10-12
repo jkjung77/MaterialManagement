@@ -26,6 +26,7 @@ import kr.baraplt.material.data.XlsxReader
 import kr.baraplt.material.domain.BomImport
 import kr.baraplt.material.data.sync.PendingAfterImport
 import kr.baraplt.material.data.sync.SyncCoordinator
+import kr.baraplt.material.data.sync.WorkspaceUser
 import kr.baraplt.material.data.entity.MaterialEntity
 import kr.baraplt.material.data.entity.ProductBomEntity
 import kr.baraplt.material.data.entity.ProductEntity
@@ -34,6 +35,7 @@ import kr.baraplt.material.data.entity.StockMovementEntity
 import kr.baraplt.material.data.repo.Workspace
 import kr.baraplt.material.domain.MovementType
 import kr.baraplt.material.domain.ScreenLabels
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.UserRole
 import kr.baraplt.material.domain.YearMonthKey
 import kr.baraplt.material.domain.formatQty
@@ -46,6 +48,9 @@ data class AppUiState(
     val workspaceId: String = "",
     val workspace: Workspace? = null,
     val role: UserRole = UserRole.STAFF,
+    val mastersGrant: Boolean = false,
+    val managerPasswordSet: Boolean = true,
+    val mastersUntil: Long = 0L,
     val staffName: String = "담당자",
     val serverLinked: Boolean = false,
     val pendingCount: Int = 0,
@@ -56,10 +61,17 @@ data class AppUiState(
 ) {
     val month: YearMonthKey get() = workspace?.month ?: YearMonthKey.current()
     val closed: Boolean get() = workspace?.closed == true
-    val canEditMaster: Boolean get() = role == UserRole.MANAGER && !closed
+    val canEditMasters: Boolean
+        get() = role == UserRole.MANAGER || mastersGrant || mastersUntil > System.currentTimeMillis()
+    val canEditMaster: Boolean get() = canEditMasters && !closed
+
+    /** 지금 권한이 없어도 관리자 암호로 열 수 있으면 추가·수정 버튼을 보여 준다. */
+    val mastersReachable: Boolean get() = canEditMasters || serverLinked
     val canEditOps: Boolean get() = !closed
     val canClose: Boolean get() = role == UserRole.MANAGER
 }
+
+private const val NO_MASTERS = "기초정보 수정은 관리자 암호를 넣은 뒤 할 수 있습니다"
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -108,8 +120,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                     repo.observeProduction(month),
                                     repo.observeCloses(),
                                     repo.observeFinishedPlans(month),
-                                    settings.role
-                                ) { _, _, _, _, role -> role },
+                                    settings.access
+                                ) { _, _, _, _, access -> access },
                                 combine(
                                     combine(
                                         settings.staffName,
@@ -123,7 +135,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 ) { left, right ->
                                     arrayOf(left[0], left[1], left[2], left[3], right[0], right[1])
                                 }
-                            ) { _, role, extra ->
+                            ) { _, access, extra ->
                                 val name = extra[0] as String
                                 val linked = extra[1] as Boolean
                                 val queue = extra[2] as String
@@ -135,7 +147,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                     ready = true,
                                     workspaceId = id,
                                     workspace = ws,
-                                    role = role,
+                                    role = access.role,
+                                    mastersGrant = access.canEditMasters,
+                                    managerPasswordSet = access.managerPasswordSet,
+                                    mastersUntil = access.mastersUntil,
                                     staffName = name,
                                     serverLinked = linked,
                                     pendingCount = runCatching { JSONArray(queue).length() }.getOrDefault(0),
@@ -223,9 +238,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         rawId: String,
         password: String,
         confirm: String? = null,
+        managerPassword: String = "",
+        staffName: String? = null,
         onResult: (String?) -> Unit = {}
     ) {
         viewModelScope.launch {
+            if (staffName != null) settings.setStaffName(staffName.trim().ifBlank { "담당자" })
             val idError = WorkspaceId.validate(rawId)
             if (idError != null) {
                 onResult(idError)
@@ -242,7 +260,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val staff = settings.staffName.first()
-            val serverErr = syncLogin(id, password, staff)
+            val serverErr = syncLogin(id, password, staff, managerPassword)
             if (serverErr == null) {
                 settings.setWorkspaceSecret(id, password)
                 settings.setWorkspaceId(id)
@@ -265,8 +283,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setWorkspacePassword(password: String, confirm: String, onResult: (String?) -> Unit = {}) {
+    fun setWorkspacePassword(
+        password: String,
+        confirm: String,
+        managerPassword: String = "",
+        staffName: String? = null,
+        onResult: (String?) -> Unit = {}
+    ) {
         viewModelScope.launch {
+            if (staffName != null) settings.setStaffName(staffName.trim().ifBlank { "담당자" })
             val id = WorkspaceId.normalize(settings.workspaceId.first())
             if (id.isEmpty()) {
                 onResult("공장 ID를 먼저 입력하세요")
@@ -278,7 +303,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             val staff = settings.staffName.first()
-            val serverErr = syncLogin(id, password, staff)
+            val serverErr = syncLogin(id, password, staff, managerPassword)
             if (serverErr == null) {
                 settings.setWorkspaceSecret(id, password)
                 app.container.bind(id)
@@ -311,8 +336,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun syncLogin(id: String, password: String, staff: String): String? {
-        return SyncCoordinator(settings, app.container.api, null).loginOrCreate(id, password, staff)
+    private suspend fun syncLogin(id: String, password: String, staff: String, managerPassword: String): String? {
+        return SyncCoordinator(settings, app.container.api, null)
+            .loginOrCreate(id, password, staff, managerPassword.trim())
     }
 
     private suspend fun syncAfterChange() {
@@ -327,12 +353,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun switchToStaff() {
+        if (uiState.value.serverLinked) return
         viewModelScope.launch { settings.setRole(UserRole.STAFF) }
     }
 
     fun switchToManager(pin: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val ok = pin == settings.managerPin.first()
+            val ok = !uiState.value.serverLinked && pin == settings.managerPin.first()
             if (ok) settings.setRole(UserRole.MANAGER)
             onResult(ok)
         }
@@ -367,12 +394,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setManagerPassword(current: String, next: String, confirm: String, onResult: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            if (uiState.value.role != UserRole.MANAGER) {
+                onResult("관리자 암호는 관리책임자만 바꿀 수 있습니다")
+                return@launch
+            }
+            val err = withContext(Dispatchers.IO) {
+                SyncCoordinator(settings, app.container.api, null).setManagerPassword(current, next, confirm)
+            }
+            show(err ?: "관리자 암호를 저장했습니다. 담당자는 기초정보를 추가·수정할 때 이 암호를 넣습니다")
+            onResult(err)
+        }
+    }
+
+    fun unlockMasters(managerPassword: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val err = withContext(Dispatchers.IO) {
+                SyncCoordinator(settings, app.container.api, null).unlockMasters(managerPassword)
+            }
+            if (err == null) show("1시간 동안 기초정보를 추가·수정할 수 있습니다")
+            onResult(err)
+        }
+    }
+
+    fun loadUsers(onResult: (List<WorkspaceUser>, String?) -> Unit) {
+        viewModelScope.launch {
+            val (users, err) = withContext(Dispatchers.IO) {
+                SyncCoordinator(settings, app.container.api, null).users()
+            }
+            onResult(users, err)
+        }
+    }
+
+    fun setUserPermission(userId: Long, canEditMasters: Boolean, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val err = withContext(Dispatchers.IO) {
+                SyncCoordinator(settings, app.container.api, null).setUserPermission(userId, canEditMasters)
+            }
+            if (err != null) show(err)
+            onResult(err)
+        }
+    }
+
     private suspend fun applyItemPhoto(photo: ItemPhotoEdit) {
         if (photo.kind != "material" && photo.kind != "product") return
-        if (photo.newCode !in 1..500) return
+        if (photo.newCode !in 1..CodeNo.MAX) return
         withContext(Dispatchers.IO) {
             val store = app.container.photos()
-            val previous = photo.previousCode?.takeIf { it in 1..500 && it != photo.newCode }
+            val previous = photo.previousCode?.takeIf { it in 1..CodeNo.MAX && it != photo.newCode }
             when {
                 photo.removed -> {
                     if (previous != null) store.tombstone(photo.kind, previous)
@@ -389,8 +459,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun saveMaterial(item: MaterialEntity, opening: Double?, photo: ItemPhotoEdit? = null): Boolean {
-        if (uiState.value.role != UserRole.MANAGER) {
-            show("기초정보는 관리책임자만 수정할 수 있습니다")
+        if (!uiState.value.canEditMasters) {
+            show(NO_MASTERS)
             return false
         }
         val taken = uiState.value.workspace?.materials?.firstOrNull { it.codeNo == item.codeNo && it.id != item.id }
@@ -414,8 +484,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteMaterial(id: Long, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("기초정보는 관리책임자만 수정할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 onDone(false)
                 return@launch
             }
@@ -429,7 +499,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             settings.enqueue(
                 SyncCoordinator.deleteMaterial(id, mat?.codeNo ?: 0)
             )
-            if (mat != null && mat.codeNo in 1..500) {
+            if (mat != null && mat.codeNo in 1..CodeNo.MAX) {
                 withContext(Dispatchers.IO) { app.container.photos().tombstone("material", mat.codeNo) }
                 photoEpoch.value = photoEpoch.value + 1
             }
@@ -448,8 +518,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         onDone: (Boolean) -> Unit = {}
     ) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("기초정보는 관리책임자만 수정할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 onDone(false)
                 return@launch
             }
@@ -481,8 +551,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteProduct(id: Long, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("기초정보는 관리책임자만 수정할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 onDone(false)
                 return@launch
             }
@@ -494,7 +564,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             settings.enqueue(SyncCoordinator.deleteProduct(id, product?.codeNo ?: 0))
-            if (product != null && product.codeNo in 1..500) {
+            if (product != null && product.codeNo in 1..CodeNo.MAX) {
                 withContext(Dispatchers.IO) { app.container.photos().tombstone("product", product.codeNo) }
                 photoEpoch.value = photoEpoch.value + 1
             }
@@ -506,8 +576,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveFinished(item: FinishedGoodEntity, lines: List<Pair<Long, Int>>, plan: Int?, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("기초정보는 관리책임자만 수정할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 onDone(false)
                 return@launch
             }
@@ -555,8 +625,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setProductOpening(productId: Long, qty: Int) {
         viewModelScope.launch {
             val state = uiState.value
-            if (state.role != UserRole.MANAGER) {
-                show("시작재고는 관리책임자만 바꿀 수 있습니다")
+            if (!state.canEditMasters) {
+                show(NO_MASTERS)
                 return@launch
             }
             if (state.closed) {
@@ -572,8 +642,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteFinished(id: Long, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("기초정보는 관리책임자만 수정할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 onDone(false)
                 return@launch
             }
@@ -826,8 +896,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun planBomImport(bytes: ByteArray): BomImport.Plan? {
-        if (uiState.value.role != UserRole.MANAGER) {
-            show("투입자재 가져오기는 관리책임자만 할 수 있습니다")
+        if (!uiState.value.canEditMasters) {
+            show(NO_MASTERS)
             return null
         }
         val sheets = withContext(Dispatchers.IO) { XlsxReader.sheets(bytes) }
@@ -841,8 +911,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun applyBomImport(plan: BomImport.Plan) {
         viewModelScope.launch {
-            if (uiState.value.role != UserRole.MANAGER) {
-                show("투입자재 가져오기는 관리책임자만 할 수 있습니다")
+            if (!uiState.value.canEditMasters) {
+                show(NO_MASTERS)
                 return@launch
             }
             if (plan.changes.isEmpty()) return@launch

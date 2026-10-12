@@ -49,6 +49,10 @@ async def lifespan(app: FastAPI):
         await conn.execute("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS screen_labels TEXT NOT NULL DEFAULT '{}'")
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS safety_stock INT NOT NULL DEFAULT 0")
         await conn.execute("ALTER TABLE finished_composition ADD COLUMN IF NOT EXISTS qty INT NOT NULL DEFAULT 1")
+        await conn.execute("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS manager_password_hash TEXT")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_masters BOOLEAN NOT NULL DEFAULT FALSE")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INT NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS masters_until BIGINT NOT NULL DEFAULT 0")
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS product_openings (
@@ -148,12 +152,31 @@ async def current_actor(request: Request):
         return None, fail("UNAUTHORIZED", "다시 로그인하세요", 401)
     if int(payload["wid"]) != user["workspace_id"]:
         return None, fail("FORBIDDEN", "다른 공장입니다", 403)
+    if user["auth_version"] != int(payload.get("uv") or 0):
+        return None, fail("UNAUTHORIZED", "다시 로그인하세요", 401)
     return user, None
 
 
 def require_manager(user) -> JSONResponse | None:
     if user["role"] != "MANAGER":
         return fail("FORBIDDEN", "관리책임자만 할 수 있습니다", 403)
+    return None
+
+
+MASTERS_UNLOCK_MS = 60 * 60 * 1000
+
+
+def can_edit_masters(user) -> bool:
+    return (
+        user["role"] == "MANAGER"
+        or bool(user["can_edit_masters"])
+        or int(user["masters_until"] or 0) > now_ms()
+    )
+
+
+def require_masters(user) -> JSONResponse | None:
+    if not can_edit_masters(user):
+        return fail("FORBIDDEN", "기초정보 수정은 관리자 암호를 넣은 뒤 할 수 있습니다", 403)
     return None
 
 
@@ -300,8 +323,11 @@ async def create_workspace(request: Request):
     password = str(body.get("password") or "")
     name = normalize_code(str(body.get("name") or code))
     manager_name = normalize_code(str(body.get("managerName") or "관리자"))
+    manager_password = str(body.get("managerPassword") or "")
     if not valid_workspace_code(code) or not valid_password(password):
         return fail("VALIDATION", "공장 ID는 1~32자, 암호는 4~32자입니다", 400)
+    if manager_password and (not valid_password(manager_password) or manager_password == password):
+        return fail("VALIDATION", "관리자 암호는 4~32자이고 공장 암호와 달라야 합니다", 400)
     pool: asyncpg.Pool = request.app.state.pool
     exists = await pool.fetchrow("SELECT id FROM workspaces WHERE code = $1", code)
     if exists:
@@ -309,11 +335,12 @@ async def create_workspace(request: Request):
     async with pool.acquire() as conn:
         async with conn.transaction():
             ws = await conn.fetchrow(
-                "INSERT INTO workspaces (code, name, password_hash, created_at) "
-                "VALUES ($1, $2, $3, $4) RETURNING *",
+                "INSERT INTO workspaces (code, name, password_hash, manager_password_hash, created_at) "
+                "VALUES ($1, $2, $3, $4, $5) RETURNING *",
                 code,
                 name or code,
                 hash_password(password),
+                hash_password(manager_password) if manager_password else None,
                 now_ms(),
             )
             user = await conn.fetchrow(
@@ -343,17 +370,20 @@ async def change_workspace_password(request: Request):
     if not valid_password(password):
         return fail("VALIDATION", "암호는 4~32자입니다", 400)
     pool: asyncpg.Pool = request.app.state.pool
-    ws = await pool.fetchrow("SELECT password_hash FROM workspaces WHERE id = $1", user["workspace_id"])
+    ws = await pool.fetchrow("SELECT * FROM workspaces WHERE id = $1", user["workspace_id"])
     if ws is None or not verify_password(current, ws["password_hash"]):
         return fail("WORKSPACE_AUTH", "현재 공장 암호가 올바르지 않습니다", 401)
     if current == password:
         return fail("VALIDATION", "현재 암호와 같습니다", 400)
-    await pool.execute(
-        "UPDATE workspaces SET password_hash = $1, token_version = token_version + 1 WHERE id = $2",
+    if ws["manager_password_hash"] and verify_password(password, ws["manager_password_hash"]):
+        return fail("VALIDATION", "공장 암호는 관리자 암호와 달라야 합니다", 400)
+    ws = await pool.fetchrow(
+        "UPDATE workspaces SET password_hash = $1, token_version = token_version + 1 WHERE id = $2 RETURNING *",
         hash_password(password),
         user["workspace_id"],
     )
-    return ok({"changed": True})
+    me = await pool.fetchrow("SELECT * FROM users WHERE id = $1", user["id"])
+    return ok({"changed": True, **issue_tokens(me, ws)})
 
 
 LABEL_KEYS = ("title", "materials", "production", "report")
@@ -387,6 +417,89 @@ async def set_screen_labels(request: Request):
         user["workspace_id"],
     )
     return ok({"labels": labels})
+
+
+@app.put("/api/v1/workspaces/me/manager-password")
+async def set_manager_password(request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    body, err = await read_json(request)
+    if err:
+        return err
+    current = str(body.get("currentPassword") or "")
+    password = str(body.get("password") or "")
+    pool: asyncpg.Pool = request.app.state.pool
+    ws = await pool.fetchrow("SELECT * FROM workspaces WHERE id = $1", user["workspace_id"])
+    if not valid_password(password) or verify_password(password, ws["password_hash"]):
+        return fail("VALIDATION", "관리자 암호는 4~32자이고 공장 암호와 달라야 합니다", 400)
+    if ws["manager_password_hash"] and not verify_password(current, ws["manager_password_hash"]):
+        return fail("MANAGER_AUTH", "현재 관리자 암호가 올바르지 않습니다", 401)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE workspaces SET manager_password_hash = $1 WHERE id = $2",
+                hash_password(password),
+                ws["id"],
+            )
+            # 예전 관리자 암호로 열어 둔 담당자 수정 권한은 닫는다.
+            await conn.execute("UPDATE users SET masters_until = 0 WHERE workspace_id = $1", ws["id"])
+            me = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user["id"])
+            ws = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", ws["id"])
+    return ok(issue_tokens(me, ws))
+
+
+@app.get("/api/v1/workspaces/me/users")
+async def list_users(request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    rows = await request.app.state.pool.fetch(
+        "SELECT id, name, role, can_edit_masters, is_active FROM users WHERE workspace_id = $1 ORDER BY role, name",
+        user["workspace_id"],
+    )
+    return ok({
+        "users": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "role": r["role"],
+                "canEditMasters": r["role"] == "MANAGER" or bool(r["can_edit_masters"]),
+                "isActive": r["is_active"],
+            }
+            for r in rows
+        ]
+    })
+
+
+@app.put("/api/v1/workspaces/me/users/{user_id}/permissions")
+async def set_user_permissions(user_id: int, request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    denied = require_manager(user)
+    if denied:
+        return denied
+    body, err = await read_json(request)
+    if err:
+        return err
+    allow = bool(body.get("canEditMasters"))
+    row = await request.app.state.pool.fetchrow(
+        "UPDATE users SET can_edit_masters = $1 "
+        "WHERE id = $2 AND workspace_id = $3 AND role = 'STAFF' RETURNING id, name, can_edit_masters",
+        allow,
+        user_id,
+        user["workspace_id"],
+    )
+    if row is None:
+        return fail("NOT_FOUND", "담당자를 찾을 수 없습니다", 404)
+    return ok({"id": row["id"], "name": row["name"], "canEditMasters": row["can_edit_masters"]})
 
 
 @app.post("/api/v1/auth/login")
@@ -423,6 +536,25 @@ async def login(request: Request):
     return ok(issue_tokens(user, ws))
 
 
+@app.post("/api/v1/auth/masters-unlock")
+async def masters_unlock(request: Request):
+    user, err = await current_actor(request)
+    if err:
+        return err
+    body, err = await read_json(request)
+    if err:
+        return err
+    pool: asyncpg.Pool = request.app.state.pool
+    ws = await pool.fetchrow("SELECT manager_password_hash FROM workspaces WHERE id = $1", user["workspace_id"])
+    if not ws or not ws["manager_password_hash"]:
+        return fail("NO_MANAGER_PASSWORD", "관리책임자가 먼저 설정에서 관리자 암호를 정해야 합니다", 409)
+    if not verify_password(str(body.get("managerPassword") or ""), ws["manager_password_hash"]):
+        return fail("MANAGER_AUTH", "관리자 암호가 올바르지 않습니다", 401)
+    until = now_ms() + MASTERS_UNLOCK_MS
+    await pool.execute("UPDATE users SET masters_until = $1 WHERE id = $2", until, user["id"])
+    return ok({"canEditMasters": True, "mastersUntil": until})
+
+
 @app.post("/api/v1/auth/refresh")
 async def refresh(request: Request):
     body, err = await read_json(request)
@@ -441,6 +573,8 @@ async def refresh(request: Request):
     if user is None or ws is None or not ws["is_active"]:
         return fail("UNAUTHORIZED", "다시 로그인하세요", 401)
     if ws["token_version"] != int(payload.get("tv") or 0):
+        return fail("UNAUTHORIZED", "다시 로그인하세요", 401)
+    if user["workspace_id"] != ws["id"] or user["auth_version"] != int(payload.get("uv") or 0):
         return fail("UNAUTHORIZED", "다시 로그인하세요", 401)
     return ok(issue_tokens(user, ws))
 
@@ -517,6 +651,12 @@ async def snapshot(request: Request, yearMonth: str = ""):
         "yearMonth": yearMonth,
         "closed": closed,
         "serverTime": now_ms(),
+        "me": {
+            "id": user["id"],
+            "role": user["role"],
+            "canEditMasters": user["role"] == "MANAGER" or bool(user["can_edit_masters"]),
+            "mastersUntil": int(user["masters_until"] or 0),
+        },
         "users": [{"id": r["id"], "name": r["name"], "role": r["role"]} for r in users],
         "materials": [_material(r) for r in materials],
         "openings": [
@@ -595,7 +735,7 @@ async def delete_material_api(request: Request):
     user, err = await current_actor(request)
     if err:
         return err
-    denied = require_manager(user)
+    denied = require_masters(user)
     if denied:
         return denied
     body, jerr = await read_json(request)
@@ -614,7 +754,7 @@ async def delete_product_api(request: Request):
     user, err = await current_actor(request)
     if err:
         return err
-    denied = require_manager(user)
+    denied = require_masters(user)
     if denied:
         return denied
     body, jerr = await read_json(request)
@@ -633,7 +773,7 @@ async def delete_finished_api(request: Request):
     user, err = await current_actor(request)
     if err:
         return err
-    denied = require_manager(user)
+    denied = require_masters(user)
     if denied:
         return denied
     body, jerr = await read_json(request)
@@ -652,7 +792,7 @@ PHOTO_MAX_BYTES = 400_000
 
 
 def _valid_photo(kind: str, code_no: int) -> bool:
-    return kind in PHOTO_KINDS and 1 <= code_no <= 500
+    return kind in PHOTO_KINDS and 1 <= code_no <= 1000
 
 
 @app.get("/api/v1/photos")
@@ -703,7 +843,7 @@ async def photo_put(kind: str, code_no: int, request: Request):
     user, err = await current_actor(request)
     if err:
         return err
-    denied = require_manager(user)
+    denied = require_masters(user)
     if denied:
         return denied
     if not _valid_photo(kind, code_no):
@@ -745,7 +885,7 @@ async def photo_delete(kind: str, code_no: int, request: Request, updatedAt: int
     user, err = await current_actor(request)
     if err:
         return err
-    denied = require_manager(user)
+    denied = require_masters(user)
     if denied:
         return denied
     if not _valid_photo(kind, code_no):
@@ -787,7 +927,7 @@ async def push(request: Request):
     async with pool.acquire() as conn:
         async with conn.transaction():
             maps = {"materials": {}, "products": {}, "finished": {}, "materialCodes": {}, "productCodes": {}}
-            if user["role"] == "MANAGER":
+            if can_edit_masters(user):
                 maps = await _upsert_masters(conn, user["workspace_id"], body)
             for item in body.get("deletedMaterials") or []:
                 result = await _delete_material(conn, user, item)
@@ -1234,8 +1374,8 @@ def _movement(r) -> dict[str, Any]:
 
 
 async def _delete_material(conn, user, item) -> dict[str, Any]:
-    if user["role"] != "MANAGER":
-        return {"code": "FORBIDDEN", "message": "관리책임자만 할 수 있습니다"}
+    if not can_edit_masters(user):
+        return {"code": "FORBIDDEN", "message": "기초정보 수정 권한이 없습니다"}
     wid = user["workspace_id"]
     row = await _find_master(conn, "materials", user, item)
     if row is None:
@@ -1292,8 +1432,8 @@ async def _find_master(conn, table: str, user, item):
 
 
 async def _delete_product(conn, user, item) -> dict[str, Any]:
-    if user["role"] != "MANAGER":
-        return {"code": "FORBIDDEN", "message": "관리책임자만 할 수 있습니다"}
+    if not can_edit_masters(user):
+        return {"code": "FORBIDDEN", "message": "기초정보 수정 권한이 없습니다"}
     wid = user["workspace_id"]
     row = await _find_master(conn, "products", user, item)
     if row is None:
@@ -1329,8 +1469,8 @@ async def _delete_product(conn, user, item) -> dict[str, Any]:
 
 
 async def _delete_finished(conn, user, item) -> dict[str, Any]:
-    if user["role"] != "MANAGER":
-        return {"code": "FORBIDDEN", "message": "관리책임자만 할 수 있습니다"}
+    if not can_edit_masters(user):
+        return {"code": "FORBIDDEN", "message": "기초정보 수정 권한이 없습니다"}
     wid = user["workspace_id"]
     row = await _find_master(conn, "finished_goods", user, item)
     if row is None:
@@ -1665,7 +1805,7 @@ async def _accept_finished_production(conn, user, item) -> dict[str, Any]:
 
 
 async def _upsert_masters(conn, wid: int, body: dict[str, Any]) -> dict[str, dict[int, int]]:
-    # Phone ids and codeNo share the 1..500 range, so they must never share one dict.
+    # Phone ids and codeNo share the 1..1000 range, so they must never share one dict.
     mat_map: dict[int, int] = {}
     mat_codes: dict[int, int] = {}
     for item in body.get("materials") or []:

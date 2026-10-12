@@ -64,7 +64,11 @@ fun HomeScreen(
                     listOfNotNull(
                         state.workspaceId.takeIf { it.isNotBlank() },
                         state.staffName,
-                        if (state.role.name == "MANAGER") "관리책임자" else "담당자",
+                        when {
+                            state.role.name == "MANAGER" -> "관리책임자"
+                            state.canEditMasters -> "담당자·기초정보"
+                            else -> "담당자"
+                        },
                         if (state.serverLinked) "서버 연결" else "이 폰만"
                     ).joinToString(" · "),
                     style = MaterialTheme.typography.bodyMedium,

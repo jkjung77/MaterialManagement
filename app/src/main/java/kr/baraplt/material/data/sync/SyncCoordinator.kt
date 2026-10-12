@@ -9,6 +9,7 @@ import kr.baraplt.material.domain.PhotoSyncAction
 import kr.baraplt.material.domain.PhotoSyncPlan
 import kr.baraplt.material.domain.MonthCarry
 import kr.baraplt.material.domain.ScreenLabels
+import kr.baraplt.material.domain.CodeNo
 import kr.baraplt.material.domain.UserRole
 import kr.baraplt.material.domain.WorkspaceId
 import kr.baraplt.material.domain.WorkspacePasswordChange
@@ -27,14 +28,24 @@ class SyncCoordinator(
     private val photos: ItemPhotoStore? = null
 ) {
     private fun db(): AppRepository = repo ?: error("공장이 아직 연결되지 않았습니다")
-    suspend fun loginOrCreate(workspaceId: String, password: String, staffName: String): String? {
-        return when (val result = api.login(workspaceId, password, staffName)) {
+    suspend fun loginOrCreate(
+        workspaceId: String,
+        password: String,
+        staffName: String,
+        managerPassword: String = ""
+    ): String? {
+        return when (val result = api.login(workspaceId, password, staffName, managerPassword)) {
             is ApiResult.Ok -> {
                 applyLogin(result.data)
                 null
             }
             is ApiResult.Err -> when (result.code) {
-                "WORKSPACE_AUTH" -> createThenLogin(workspaceId, password, staffName, result.message)
+                "WORKSPACE_AUTH" -> createThenLogin(workspaceId, password, staffName, managerPassword, result.message)
+                "MANAGER_AUTH" -> if (managerPassword.isBlank()) {
+                    "「$staffName」은 관리책임자 이름입니다. 관리자 암호를 넣으세요"
+                } else {
+                    "관리자 암호가 올바르지 않습니다"
+                }
                 "NETWORK" -> "서버에 연결할 수 없습니다"
                 else -> result.message
             }
@@ -45,9 +56,10 @@ class SyncCoordinator(
         workspaceId: String,
         password: String,
         staffName: String,
+        managerPassword: String,
         loginMessage: String
     ): String? {
-        return when (val created = api.createWorkspace(workspaceId, password, staffName)) {
+        return when (val created = api.createWorkspace(workspaceId, password, staffName, managerPassword)) {
             is ApiResult.Ok -> {
                 applyLogin(created.data)
                 null
@@ -59,7 +71,46 @@ class SyncCoordinator(
     private suspend fun applyLogin(data: LoginData) {
         settings.setTokens(data.accessToken, data.refreshToken)
         settings.setStaffName(data.userName.ifBlank { settings.staffName.first() })
-        runCatching { settings.setRole(UserRole.valueOf(data.role)) }
+        val role = runCatching { UserRole.valueOf(data.role) }.getOrDefault(UserRole.STAFF)
+        settings.setAccess(role, data.canEditMasters, data.managerPasswordSet)
+    }
+
+    suspend fun setManagerPassword(current: String, next: String, confirm: String): String? {
+        val pw = next.trim()
+        if (pw.length !in 4..32) return "관리자 암호는 4~32자로 넣으세요"
+        if (pw != confirm.trim()) return "새 관리자 암호 확인이 맞지 않습니다"
+        val id = WorkspaceId.normalize(settings.workspaceId.first())
+        if (id.isNotBlank() && settings.verifyWorkspaceSecret(id, pw)) return "관리자 암호는 공장 암호와 달라야 합니다"
+        val token = requireToken() ?: return "서버에 연결되어 있지 않습니다. 공장에 다시 입장하세요"
+        return when (val result = api.setManagerPassword(token, current.trim(), pw)) {
+            is ApiResult.Ok -> {
+                applyLogin(result.data)
+                null
+            }
+            is ApiResult.Err -> when (result.code) {
+                "FORBIDDEN" -> "관리책임자만 바꿀 수 있습니다"
+                "UNAUTHORIZED" -> "다시 로그인하세요"
+                "NETWORK" -> "서버에 연결할 수 없습니다"
+                else -> result.message
+            }
+        }
+    }
+
+    suspend fun users(): Pair<List<WorkspaceUser>, String?> {
+        val token = requireToken() ?: return emptyList<WorkspaceUser>() to "서버에 연결되어 있지 않습니다"
+        return when (val result = api.users(token)) {
+            is ApiResult.Ok -> result.data to null
+            is ApiResult.Err -> emptyList<WorkspaceUser>() to
+                if (result.code == "NETWORK") "서버에 연결할 수 없습니다" else result.message
+        }
+    }
+
+    suspend fun setUserPermission(userId: Long, canEditMasters: Boolean): String? {
+        val token = requireToken() ?: return "서버에 연결되어 있지 않습니다"
+        return when (val result = api.setUserPermission(token, userId, canEditMasters)) {
+            is ApiResult.Ok -> null
+            is ApiResult.Err -> if (result.code == "NETWORK") "서버에 연결할 수 없습니다" else result.message
+        }
     }
 
     suspend fun changeWorkspacePassword(current: String, next: String, confirm: String): String? {
@@ -81,7 +132,12 @@ class SyncCoordinator(
             }
             is ApiResult.Ok -> {
                 settings.setWorkspaceSecret(id, next.trim())
-                loginOrCreate(id, next.trim(), settings.staffName.first())
+                if (result.data.optString("accessToken").isNotBlank()) {
+                    applyLogin(LoginData.from(result.data))
+                    null
+                } else {
+                    loginOrCreate(id, next.trim(), settings.staffName.first())
+                }
             }
         }
     }
@@ -163,7 +219,7 @@ class SyncCoordinator(
             if (serverCount == 0) {
                 val imported = api.importBundle(token, JSONObject(BackupIo.toJson(localBundle)))
                 if (imported is ApiResult.Err && imported.code == "FORBIDDEN") {
-                    return "설정에서 공장 암호를 넣고 「공장 전환」을 누르세요. 아래 PIN 관리책임자와 서버 권한은 다릅니다. 이 폰 입고는 그대로 있습니다"
+                    return "설정에서 관리책임자 이름·공장 암호·관리자 암호를 넣고 「공장 전환」을 누르세요. 이 폰 입고는 그대로 있습니다"
                 }
                 if (imported is ApiResult.Ok) {
                     pending = PendingAfterImport.dropUploadedKinds(pending)
@@ -175,7 +231,7 @@ class SyncCoordinator(
         pending = PendingAfterImport.dropAlreadyOnServer(pending, probe?.optJSONArray("movements"))
         settings.setPendingItems(pending)
         val dirtyStamp = settings.mastersDirtyAt()
-        val pushBody = buildPush(pending, role == UserRole.MANAGER && dirtyStamp > 0)
+        val pushBody = buildPush(pending, settings.access.first().mastersOpen() && dirtyStamp > 0)
         if (pushBody.length() > 0) {
             when (val pushed = api.push(token, pushBody)) {
                 is ApiResult.Err -> {
@@ -227,7 +283,7 @@ class SyncCoordinator(
                     restoreKeepingDeletes(again, pending, month)
                     settings.setLastSync(System.currentTimeMillis())
                     settings.clearMastersDirty(dirtyStamp)
-                    return withPhotos(token, role, synced(keptNotice))
+                    return withPhotos(token, synced(keptNotice))
                 }
             }
             return "자재는 이 폰에 저장했습니다. 설정에서 공장 암호를 넣고 「공장 전환」을 하면 서버에도 올라갑니다"
@@ -235,7 +291,7 @@ class SyncCoordinator(
         restoreKeepingDeletes(snap, pending, month)
         settings.setLastSync(System.currentTimeMillis())
         settings.clearMastersDirty(dirtyStamp)
-        return withPhotos(token, role, synced(keptNotice))
+        return withPhotos(token, synced(keptNotice))
     }
 
     private fun synced(notice: String): String =
@@ -248,15 +304,12 @@ class SyncCoordinator(
         return runCatching { syncNow(month, role) }.getOrElse { it.message }
     }
 
-    private suspend fun withPhotos(token: String, message: String): String =
-        withPhotos(token, settings.role.first(), message)
-
-    private suspend fun withPhotos(token: String, role: UserRole, message: String): String {
-        val extra = syncPhotos(token, role)
+    private suspend fun withPhotos(token: String, message: String): String {
+        val extra = syncPhotos(token, settings.access.first().mastersOpen())
         return if (extra.isNullOrBlank()) message else "$message $extra"
     }
 
-    private suspend fun syncPhotos(token: String, role: UserRole): String? {
+    private suspend fun syncPhotos(token: String, canUpload: Boolean): String? {
         val store = photos ?: return null
         val remote = when (val index = api.photoIndex(token)) {
             is ApiResult.Err -> return if (index.code == "HTTP_404") null else "사진은 다음에 맞춰집니다"
@@ -267,7 +320,7 @@ class SyncCoordinator(
             val stamp = op.stamp
             val stepFailed = when (op.action) {
                 PhotoSyncAction.UPLOAD -> {
-                    if (role != UserRole.MANAGER) false
+                    if (!canUpload) false
                     else {
                         val bytes = store.read(stamp.kind, stamp.codeNo)
                         if (bytes == null) false
@@ -275,7 +328,7 @@ class SyncCoordinator(
                     }
                 }
                 PhotoSyncAction.DELETE_REMOTE -> {
-                    if (role != UserRole.MANAGER) false
+                    if (!canUpload) false
                     else {
                         val deleted = api.deletePhoto(token, stamp.kind, stamp.codeNo, stamp.updatedAt)
                         deleted is ApiResult.Err && deleted.code != "HTTP_404" && deleted.code != "NOT_FOUND"
@@ -302,7 +355,7 @@ class SyncCoordinator(
             val item = items.optJSONObject(i) ?: continue
             val kind = item.optString("kind")
             val code = item.optInt("codeNo")
-            if ((kind != "material" && kind != "product") || code !in 1..500) continue
+            if ((kind != "material" && kind != "product") || code !in 1..CodeNo.MAX) continue
             out += PhotoStamp(kind, code, item.optLong("updatedAt"))
         }
         return out
@@ -326,8 +379,35 @@ class SyncCoordinator(
 
     private suspend fun snapshot(token: String, month: YearMonthKey): JSONObject? {
         return when (val result = api.snapshot(token, month.value)) {
-            is ApiResult.Ok -> result.data.also { applyScreenLabels(it) }
+            is ApiResult.Ok -> result.data.also {
+                applyScreenLabels(it)
+                applyMe(it)
+            }
             is ApiResult.Err -> null
+        }
+    }
+
+    private suspend fun applyMe(snap: JSONObject) {
+        val me = snap.optJSONObject("me") ?: return
+        val role = runCatching { UserRole.valueOf(me.optString("role")) }.getOrNull() ?: return
+        settings.setAccess(role, role == UserRole.MANAGER || me.optBoolean("canEditMasters"))
+        val left = me.optLong("mastersUntil") - snap.optLong("serverTime")
+        settings.setMastersUntil(if (left > 0) System.currentTimeMillis() + left else 0L)
+    }
+
+    suspend fun unlockMasters(managerPassword: String): String? {
+        if (managerPassword.isBlank()) return "관리자 암호를 넣으세요"
+        val token = requireToken() ?: return "서버에 연결되어 있지 않습니다. 공장에 다시 입장하세요"
+        return when (val result = api.unlockMasters(token, managerPassword.trim())) {
+            is ApiResult.Ok -> {
+                settings.setMastersUntil(System.currentTimeMillis() + result.data)
+                null
+            }
+            is ApiResult.Err -> when (result.code) {
+                "NETWORK" -> "서버에 연결할 수 없습니다"
+                "UNAUTHORIZED" -> "다시 로그인하세요"
+                else -> result.message
+            }
         }
     }
 

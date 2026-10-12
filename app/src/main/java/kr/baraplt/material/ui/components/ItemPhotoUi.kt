@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kr.baraplt.material.data.ItemPhotoStore
+import kr.baraplt.material.domain.CodeNo
 
 @Composable
 fun photoLeading(
@@ -187,7 +188,7 @@ private fun rememberPhotoBitmap(
     val context = LocalContext.current
     var bitmap by remember(workspaceId, kind, codeNo, epoch, maxEdge) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(workspaceId, kind, codeNo, epoch, maxEdge) {
-        bitmap = if (workspaceId.isBlank() || codeNo !in 1..500) {
+        bitmap = if (workspaceId.isBlank() || codeNo !in 1..CodeNo.MAX) {
             null
         } else {
             withContext(Dispatchers.IO) {

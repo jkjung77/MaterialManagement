@@ -5,8 +5,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,14 +18,17 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -31,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kr.baraplt.material.data.sync.WorkspaceUser
 import kr.baraplt.material.domain.BomImport
 import kr.baraplt.material.domain.ScreenLabels
 import kr.baraplt.material.domain.UserRole
@@ -45,6 +51,7 @@ import kr.baraplt.material.ui.components.PasswordField
 import kr.baraplt.material.ui.components.PrimaryButton
 import kr.baraplt.material.ui.components.SectionTitle
 import kr.baraplt.material.ui.components.TextFieldPlain
+import kr.baraplt.material.ui.components.rememberMastersGuard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,6 +150,12 @@ fun SettingsScreen(
     var workspaceDraft by remember(state.workspaceId) { mutableStateOf(state.workspaceId) }
     var workspacePassword by remember { mutableStateOf("") }
     var workspaceConfirm by remember { mutableStateOf("") }
+    var currentManagerPassword by remember { mutableStateOf("") }
+    var newManagerPassword by remember { mutableStateOf("") }
+    var newManagerConfirm by remember { mutableStateOf("") }
+    var users by remember { mutableStateOf<List<WorkspaceUser>?>(null) }
+    var usersError by remember { mutableStateOf<String?>(null) }
+    val mastersGuard = rememberMastersGuard(state, vm)
     var name by remember(state.staffName) { mutableStateOf(state.staffName) }
     var pin by remember { mutableStateOf("") }
     var oldPin by remember { mutableStateOf("") }
@@ -233,7 +246,12 @@ fun SettingsScreen(
                 ) { vm.syncNow() }
                 Spacer(Modifier.height(8.dp))
                 PrimaryButton("공장 전환") {
-                    vm.joinWorkspace(workspaceDraft, workspacePassword, workspaceConfirm.ifBlank { null }) { err ->
+                    vm.joinWorkspace(
+                        workspaceDraft,
+                        workspacePassword,
+                        workspaceConfirm.ifBlank { null },
+                        staffName = name
+                    ) { err ->
                         if (err == null) {
                             workspacePassword = ""
                             workspaceConfirm = ""
@@ -287,13 +305,24 @@ fun SettingsScreen(
             }
             item { SectionTitle("권한") }
             item {
+                val roleText = when {
+                    state.role == UserRole.MANAGER -> "관리책임자"
+                    state.canEditMasters -> "담당자 · 기초정보 수정 가능"
+                    else -> "담당자"
+                }
+                Text("지금 권한: $roleText", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    "수정 권한: 관리책임자 1명. 실적 입력: 생산·자재·출하 담당자. 기본 PIN 0000",
+                    if (state.serverLinked) {
+                        "서버에 연결된 폰은 서버 권한을 따릅니다. 입장은 모두 공장 암호만 씁니다. 담당자가 자재·단품·완제품을 추가·수정하려면 그때 관리자 암호를 넣습니다(1시간 유지)."
+                    } else {
+                        "서버에 연결되지 않은 폰입니다. 이 폰에서만 PIN으로 관리책임자 전환을 합니다. 기본 PIN 0000"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
-                if (state.role == UserRole.MANAGER) {
+                if (!state.serverLinked && state.role == UserRole.MANAGER) {
                     GhostButton("담당자로 전환") { vm.switchToStaff() }
                     Spacer(Modifier.height(8.dp))
                     NumberField(oldPin, { oldPin = it }, "현재 PIN")
@@ -304,6 +333,97 @@ fun SettingsScreen(
                         }
                     }
                     Spacer(Modifier.height(16.dp))
+                }
+                if (state.serverLinked && state.role == UserRole.MANAGER) {
+                    Text("관리자 암호", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (state.managerPasswordSet) {
+                            "담당자가 자재·단품·완제품을 추가·수정할 때 넣는 암호입니다. 바꾸면 예전 암호로 열어 둔 담당자 수정은 닫힙니다."
+                        } else {
+                            "관리자 암호가 아직 없습니다. 정하기 전에는 담당자가 기초정보를 추가·수정할 수 없습니다. 공장 암호와 다른 암호를 정하세요."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (state.managerPasswordSet) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (state.managerPasswordSet) {
+                        PasswordField(currentManagerPassword, { currentManagerPassword = it }, "현재 관리자 암호")
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    PasswordField(newManagerPassword, { newManagerPassword = it }, "새 관리자 암호 (4자 이상)")
+                    Spacer(Modifier.height(8.dp))
+                    PasswordField(newManagerConfirm, { newManagerConfirm = it }, "새 관리자 암호 확인")
+                    Spacer(Modifier.height(8.dp))
+                    PrimaryButton(if (state.managerPasswordSet) "관리자 암호 변경" else "관리자 암호 정하기") {
+                        vm.setManagerPassword(currentManagerPassword, newManagerPassword, newManagerConfirm) { err ->
+                            if (err == null) {
+                                currentManagerPassword = ""
+                                newManagerPassword = ""
+                                newManagerConfirm = ""
+                            } else {
+                                vm.show(err)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text("기초정보 수정 권한", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "켜 둔 담당자는 관리자 암호 없이도 자재·단품·완제품을 추가·수정할 수 있습니다. 마감·재고조사 승인·공장 암호는 관리책임자만 합니다. 이 공장에 한 번 입장한 이름이 나옵니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LaunchedEffect(state.workspaceId) {
+                        vm.loadUsers { list, err ->
+                            users = list
+                            usersError = err
+                        }
+                    }
+                    usersError?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    }
+                    users.orEmpty().filter { it.isActive }.forEach { user ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(user.name, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    when {
+                                        user.role == "MANAGER" -> "관리책임자"
+                                        user.canEditMasters -> "기초정보 수정 가능"
+                                        else -> "실적 입력만"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (user.role != "MANAGER") {
+                                Switch(
+                                    checked = user.canEditMasters,
+                                    onCheckedChange = { allow ->
+                                        vm.setUserPermission(user.id, allow) { err ->
+                                            if (err == null) {
+                                                users = users?.map {
+                                                    if (it.id == user.id) it.copy(canEditMasters = allow) else it
+                                                }
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    GhostButton("사용자 목록 새로고침") {
+                        vm.loadUsers { list, err ->
+                            users = list
+                            usersError = err
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+                if (state.role == UserRole.MANAGER) {
                     Text(
                         "공장 암호 변경. 바꾸면 다른 폰은 새 암호로 다시 입장해야 합니다.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -329,7 +449,7 @@ fun SettingsScreen(
                             }
                         }
                     }
-                } else {
+                } else if (!state.serverLinked) {
                     NumberField(pin, { pin = it }, "관리책임자 PIN")
                     PrimaryButton("관리책임자로 전환") {
                         vm.switchToManager(pin) { ok ->
@@ -358,7 +478,7 @@ fun SettingsScreen(
                     }
                 }
             }
-            if (state.role == UserRole.MANAGER) {
+            if (state.mastersReachable) {
                 item { SectionTitle("투입자재 엑셀") }
                 item {
                     Text(
@@ -368,9 +488,11 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     GhostButton("투입자재 엑셀 가져오기") {
-                        bomImportLauncher.launch(
-                            arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", "*/*")
-                        )
+                        mastersGuard {
+                            bomImportLauncher.launch(
+                                arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", "*/*")
+                            )
+                        }
                     }
                 }
             }
@@ -381,7 +503,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                Text("버전 1.1.27 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("버전 1.1.31 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
