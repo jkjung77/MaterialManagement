@@ -15,8 +15,8 @@ android {
         applicationId = "kr.baraplt.material"
         minSdk = 26
         targetSdk = 36
-        versionCode = 33
-        versionName = "1.1.31"
+        versionCode = 35
+        versionName = "1.1.33"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -91,6 +91,10 @@ dependencies {
     implementation(libs.google.play.app.update.ktx)
     implementation(libs.google.play.services.ads)
     implementation(libs.google.play.services.code.scanner)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.google.play.services.mlkit.barcode.scanning)
 
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.compose.ui.tooling)

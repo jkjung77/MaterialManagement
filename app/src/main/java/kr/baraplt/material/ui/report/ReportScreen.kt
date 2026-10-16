@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -16,7 +17,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kr.baraplt.material.domain.DailyTrace
+import kr.baraplt.material.domain.DatedQty
+import kr.baraplt.material.domain.DayLine
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.TraceItem
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.ratioGrade
 import kr.baraplt.material.domain.formatPct
@@ -25,6 +30,7 @@ import kr.baraplt.material.ui.AppUiState
 import kr.baraplt.material.ui.components.AppCard
 import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.AppSearchField
+import kr.baraplt.material.ui.components.DayGrid
 import kr.baraplt.material.ui.components.KeyValue
 import kr.baraplt.material.ui.components.KpiTile
 import kr.baraplt.material.ui.components.MonthSwitcher
@@ -42,6 +48,7 @@ fun ReportScreen(
     val report = ws?.report
     var productQuery by remember { mutableStateOf("") }
     var materialQuery by remember { mutableStateOf("") }
+    var selectedDay by remember(state.month) { mutableStateOf<Int?>(null) }
     AppScreenScaffold(title = "매출 대비 자재실적") { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
@@ -71,13 +78,57 @@ fun ReportScreen(
                         KeyValue("단품 생산합계", report.producedQty.toString())
                     }
                 }
+                item { SectionTitle("일자별 실적") }
+                item {
+                    Text(
+                        "날짜를 누르면 그날 생산한 단품과 완성품이 나옵니다. 같은 날짜를 다시 누르면 닫힙니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                item {
+                    val marked = (DailyTrace.activeDays(ws.production.map { DatedQty(it.productId, it.workDate, it.qty) }) +
+                        DailyTrace.activeDays(ws.finishedOutput.map { DatedQty(it.finishedGoodId, it.workDate, it.qty) }))
+                        .associateWith { 1 }
+                    DayGrid(
+                        state.month.year,
+                        state.month.month,
+                        state.month.dayCount(),
+                        marked,
+                        selectedDay,
+                        showQty = false
+                    ) { day ->
+                        selectedDay = if (selectedDay == day) null else day
+                    }
+                }
+                val day = selectedDay
+                if (day != null) {
+                    val productsThatDay = DailyTrace.onDay(
+                        day,
+                        ws.production.map { DatedQty(it.productId, it.workDate, it.qty) },
+                        ws.products.map { TraceItem(it.id, it.codeNo, it.name, it.barcode) }
+                    )
+                    val finishedThatDay = DailyTrace.onDay(
+                        day,
+                        ws.finishedOutput.map { DatedQty(it.finishedGoodId, it.workDate, it.qty) },
+                        ws.finished.map { TraceItem(it.id, it.codeNo, it.name) }
+                    )
+                    item {
+                        Text(
+                            "${state.month.month}월 ${day}일 · 단품 ${productsThatDay.size} · 완성품 ${finishedThatDay.size}",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    dayLines("단품", "trace-p", productsThatDay, showBarcode = true)
+                    dayLines("완성품", "trace-f", finishedThatDay, showBarcode = false)
+                }
                 item { SectionTitle("단품별") }
                 item { AppSearchField(productQuery, { productQuery = it }, "단품명 / 번호 / 바코드") }
                 val products = ws.products.filter { ItemMatch.matches(it.codeNo, it.name, productQuery, it.barcode) }
                 if (products.isEmpty()) {
                     item { Text("찾는 단품이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
                 }
-                items(products, key = { it.id }) { p ->
+                items(products, key = { "prod-${it.id}" }) { p ->
                     AppCard {
                         Text("NO.${p.codeNo}  ${p.name}", style = MaterialTheme.typography.titleMedium)
                         KeyValue("실적 / 계획", "${p.produced} / ${p.monthPlan}")
@@ -95,7 +146,7 @@ fun ReportScreen(
                 if (materials.isEmpty()) {
                     item { Text("찾는 자재가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
                 }
-                items(materials, key = { it.id }) { m ->
+                items(materials, key = { "mat-${it.id}" }) { m ->
                     AppCard {
                         Text("NO.${m.codeNo}  ${m.name}", style = MaterialTheme.typography.titleMedium)
                         KeyValue("사용량", "${formatQty(m.usage)} ${m.unit}")
@@ -113,6 +164,24 @@ fun ReportScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+private fun LazyListScope.dayLines(title: String, keyPrefix: String, lines: List<DayLine>, showBarcode: Boolean) {
+    item(key = "$keyPrefix-title") {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+    }
+    if (lines.isEmpty()) {
+        item(key = "$keyPrefix-empty") {
+            Text("이 날짜에 ${title} 실적이 없습니다.", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+    items(lines, key = { "$keyPrefix-${it.codeNo}" }) { line ->
+        AppCard {
+            Text("NO.${line.codeNo}  ${line.name}", style = MaterialTheme.typography.titleMedium)
+            KeyValue("수량", line.qty.toString())
+            if (showBarcode && line.barcode.isNotBlank()) KeyValue("바코드", line.barcode)
         }
     }
 }

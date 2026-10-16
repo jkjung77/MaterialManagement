@@ -379,6 +379,7 @@ fun DayGrid(
     days: Int,
     qtyByDay: Map<Int, Int>,
     selected: Int?,
+    showQty: Boolean = true,
     onSelect: (Int) -> Unit
 ) {
     val weekLabels = listOf("일", "월", "화", "수", "목", "금", "토")
@@ -420,7 +421,7 @@ fun DayGrid(
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("$day", color = fg, style = MaterialTheme.typography.labelMedium)
-                            if (qty > 0) Text("$qty", color = fg, style = MaterialTheme.typography.labelLarge)
+                            if (showQty && qty > 0) Text("$qty", color = fg, style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
