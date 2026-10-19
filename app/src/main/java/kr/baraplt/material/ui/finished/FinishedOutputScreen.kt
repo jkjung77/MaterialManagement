@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.shortItemName
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.parseCount
 import kr.baraplt.material.ui.AppUiState
@@ -125,7 +126,7 @@ fun FinishedOutputScreen(
     if (day != null && item != null) {
         AlertDialog(
             onDismissRequest = { selectedDay = null },
-            title = { Text("${item.name} · ${day}일") },
+            title = { Text("${shortItemName(item.name)} · ${day}일") },
             text = {
                 Column {
                     if (state.closed) {

@@ -341,26 +341,6 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun setFinishedPlan(finishedId: Long, month: YearMonthKey, qty: Int) {
         db.monthlyPlans().upsert(MonthlyPlanEntity(finishedGoodId = finishedId, yearMonth = month.value, qty = qty))
-        recordFinishedPlansOnProducts(month)
-    }
-
-    suspend fun recordFinishedPlansOnProducts(month: YearMonthKey) {
-        val plans = db.monthlyPlans().forMonth(month.value).associate { it.finishedGoodId to it.qty }
-        val comps = db.composition().getAll().groupBy { it.finishedGoodId }
-        val sum = mutableMapOf<Long, Int>()
-        val touched = mutableSetOf<Long>()
-        comps.forEach { (finishedId, lines) ->
-            val unique = lines.distinctBy { it.productId }
-            touched.addAll(unique.map { it.productId })
-            val qty = plans[finishedId] ?: 0
-            if (qty <= 0) return@forEach
-            unique.forEach { line ->
-                sum[line.productId] = (sum[line.productId] ?: 0) + qty * line.qty.coerceAtLeast(1)
-            }
-        }
-        touched.forEach { productId ->
-            setProductPlan(productId, month, sum[productId] ?: 0)
-        }
     }
 
     suspend fun setOpening(materialId: Long, month: YearMonthKey, qty: Double) {

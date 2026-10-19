@@ -16,6 +16,12 @@ object ItemMatch {
     }
 }
 
+/** 수량 입력 창 제목. 괄호 안 품번은 빼고, 품명 자체는 그대로 둔다. */
+fun shortItemName(name: String): String {
+    val cut = name.substringBefore('(').trim()
+    return cut.ifEmpty { name.trim() }
+}
+
 fun ratioGrade(salesAmount: Double, ratio: Double, goodPercent: Int = 55, normalPercent: Int = 70): String {
     if (salesAmount <= 0.0) return "-"
     val good = goodPercent.coerceIn(1, 98) / 100.0

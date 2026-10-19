@@ -598,9 +598,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             if (plan != null) repo.setFinishedPlan(id, uiState.value.month, plan)
-            else repo.recordFinishedPlansOnProducts(uiState.value.month)
             settings.markMastersDirty()
-            show("완성품을 저장했습니다. 같은 단품은 완성품 계획 합계가 단품 계획에 반영됩니다")
+            show("완성품을 저장했습니다")
             onDone(true)
             syncAfterChange()
         }
@@ -776,6 +775,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
             show("$label $qty 로 고쳤습니다")
+            syncAfterChange()
+        }
+    }
+
+    fun setProductMonthPlan(productId: Long, qty: Int) {
+        viewModelScope.launch {
+            val state = uiState.value
+            if (state.closed) {
+                show("마감된 달은 실적을 수정하지 않습니다")
+                return@launch
+            }
+            if (!state.canEditMasters) {
+                show(NO_MASTERS)
+                return@launch
+            }
+            repo.setProductPlan(productId, state.month, qty)
+            settings.markMastersDirty()
+            show("이달 생산계획을 $qty 로 저장했습니다")
             syncAfterChange()
         }
     }

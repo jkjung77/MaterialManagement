@@ -15,8 +15,8 @@ android {
         applicationId = "kr.baraplt.material"
         minSdk = 26
         targetSdk = 36
-        versionCode = 35
-        versionName = "1.1.33"
+        versionCode = 37
+        versionName = "1.1.35"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

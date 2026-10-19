@@ -1,22 +1,39 @@
-A factory material app for the shop floor. Record inbound stock, daily production, and inventory on the phone even when the network is weak.
+A factory material app for the shop floor. Record inbound stock, production, and inventory on the phone even when the network is weak. When connected, the same factory stays in sync across phones.
 
 Materials
-• Item number, name, unit, unit price, safety stock, lead time
+• Item number, name, unit, price, safety stock, lead time
 • Inbound, outbound, scrap, and stocktake adjustments
 • Current stock = opening + inbound − production use − outbound − scrap + adjust
+• Find by name, number, or barcode
 
 Single-part production
-• Bill of materials with US per part
+• Bill of materials with usage per part
 • Daily production automatically consumes materials
-• Material cost, material ratio, plan versus actual
+• The month plan is entered on the production screen. A finished-goods plan is only a reference
+
+Barcode
+• Auto reads the code in the center guide
+• Manual reads the code under the crosshair when you tap, for sheets of many codes
 
 Finished goods
 • Built from single parts
-• Monthly customer plan only (no daily sales entry)
+• Monthly plan and daily finished output
+• Finished output consumes component parts. Materials are consumed by single-part production
 
-Close and backup
-• Month close locks results and carries stock to next month
-• Manager approval for stocktake differences
-• All data stays on the device. Export a JSON backup anytime
+Results and close
+• Sales, material usage, purchases, and the material ratio
+• Pick a date to see the single parts and finished goods made that day
+• Month close locks the month and carries stock forward
+• Stocktake differences need manager approval
 
-A banner ad may appear at the bottom of the screen. No sign-in. No location or contacts permission.
+Access
+• Enter with the factory password
+• Editing materials, parts, and finished goods needs the manager password, or a grant from the manager
+• Month close and stocktake approval stay with the manager
+
+Backup and sync
+• Works offline on the phone
+• A linked factory syncs with the server
+• Export a JSON backup anytime
+
+A banner ad may appear at the bottom. Barcode scanning uses the camera. No location or contacts permission.

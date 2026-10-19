@@ -503,7 +503,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                Text("버전 1.1.33 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("버전 1.1.35 · 서버 동기화 · Material 3", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

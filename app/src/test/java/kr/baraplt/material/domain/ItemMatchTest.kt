@@ -24,4 +24,10 @@ class ItemMatchTest {
         assertEquals("보통", ratioGrade(100.0, 0.64, 55, 70))
         assertEquals("주의", ratioGrade(100.0, 0.64, 40, 50))
     }
+
+    @Test
+    fun shortNameDropsTheParentheticalCode() {
+        assertEquals("JK FRT 트리코트 VNB LH", shortItemName("JK FRT 트리코트 VNB LH(85810-DS000VNB LH)"))
+        assertEquals("브라켓 LH", shortItemName("브라켓 LH"))
+    }
 }

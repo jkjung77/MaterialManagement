@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kr.baraplt.material.domain.BarcodeLookup
 import kr.baraplt.material.domain.ItemMatch
+import kr.baraplt.material.domain.shortItemName
 import kr.baraplt.material.ui.components.rememberBarcodeScan
 import kr.baraplt.material.domain.formatMoney
 import kr.baraplt.material.domain.parseCount
@@ -34,10 +35,12 @@ import kr.baraplt.material.ui.components.AppListCard
 import kr.baraplt.material.ui.components.AppScreenScaffold
 import kr.baraplt.material.ui.components.AppSearchField
 import kr.baraplt.material.ui.components.DayGrid
+import kr.baraplt.material.ui.components.GhostButton
 import kr.baraplt.material.ui.components.LockedBanner
 import kr.baraplt.material.ui.components.MonthSwitcher
 import kr.baraplt.material.ui.components.NumberField
 import kr.baraplt.material.ui.components.SectionTitle
+import kr.baraplt.material.ui.components.rememberMastersGuard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +73,7 @@ fun ProductionScreen(
         if (hit != null) productId = hit.id else vm.show("바코드 $code 단품을 찾지 못했습니다")
     }
     val days = state.month.dayCount()
+    val guard = rememberMastersGuard(state, vm)
     val qtyByDay = state.workspace?.production
         ?.filter { it.productId == productId }
         ?.associate { it.workDate.takeLast(2).toInt() to it.qty }
@@ -100,10 +104,7 @@ fun ProductionScreen(
         items(filtered, key = { it.id }) { p ->
             AppListCard(
                 title = "NO.${p.codeNo}  ${p.name}",
-                subtitle = listOfNotNull(
-                    "실적 ${p.produced} / 계획 ${p.monthPlan}",
-                    p.finishedRefLabel.takeIf { it.isNotBlank() }
-                ).joinToString(" · "),
+                subtitle = "실적 ${p.produced} / 계획 ${p.monthPlan}",
                 onClick = { productId = p.id },
                 trailing = {
                     if (p.id == productId) Text("선택", color = MaterialTheme.colorScheme.primary)
@@ -112,9 +113,32 @@ fun ProductionScreen(
         }
         if (product != null && filtered.any { it.id == product.id }) {
             item {
+                var planText by remember(product.id, state.month, product.monthPlan) {
+                    mutableStateOf(product.monthPlan.takeIf { it > 0 }?.toString().orEmpty())
+                }
                 AppCard {
                     Text(product.name, style = MaterialTheme.typography.titleLarge)
                     Text("이달 합계 ${product.produced} · 자재투입 ${formatMoney(product.usageAmount)}원", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    if (state.closed) {
+                        Text("이달 생산계획 ${product.monthPlan}", style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        NumberField(planText, { planText = it }, "이달 생산계획")
+                        GhostButton("계획 저장") {
+                            guard {
+                                val plan = parseCount(planText)
+                                if (plan == null) vm.show("계획은 0 이상의 정수로 입력하세요")
+                                else vm.setProductMonthPlan(product.id, plan)
+                            }
+                        }
+                    }
+                    if (product.finishedRefLabel.isNotBlank()) {
+                        Text(
+                            "완제품 월계획 참고 ${product.finishedRefQty} (${product.finishedRefNote}). 단품 계획과는 따로입니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(12.dp))
                     DayGrid(state.month.year, state.month.month, days, qtyByDay, selectedDay) { day ->
                         selectedDay = day
@@ -139,7 +163,7 @@ fun ProductionScreen(
     if (day != null && product != null) {
         AlertDialog(
             onDismissRequest = { selectedDay = null },
-            title = { Text("${product.name} · ${day}일") },
+            title = { Text("${shortItemName(product.name)} · ${day}일") },
             text = {
                 Column {
                     if (state.closed) Text("마감된 달은 수정하지 않습니다.")
