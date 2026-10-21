@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
@@ -208,7 +210,10 @@ private fun BarcodeScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Un
         }
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
             Canvas(
@@ -251,7 +256,7 @@ private fun BarcodeScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Un
                 }
             }
             Row(
-                Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(8.dp),
+                Modifier.fillMaxWidth().align(Alignment.TopCenter).statusBarsPadding().padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onDismiss) {
@@ -260,11 +265,11 @@ private fun BarcodeScannerDialog(onDismiss: () -> Unit, onResult: (String) -> Un
                 Text("바코드 스캔", color = Color.White, style = MaterialTheme.typography.titleMedium)
             }
             Surface(
-                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).navigationBarsPadding(),
                 color = MaterialTheme.colorScheme.surface
             ) {
                 Column(
-                    Modifier.padding(16.dp),
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
